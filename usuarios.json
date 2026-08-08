@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "generatedAt": "2026-07-28T12:54:34.754Z",
+  "users": [
+    {
+      "username": "admin",
+      "name": "Super Usuario HMI",
+      "role": "Admin",
+      "salt": "694b05e883c7e8d58f7c705ae6b4ff65",
+      "hash": "fad196e1084c70c3193c3416e133107a1a741af801c0a2d957111014eeb0c753",
+      "iterations": 100000,
+      "algo": "PBKDF2-SHA256",
+      "isSystem": true,
+      "createdAt": "2026-07-28T12:54:34.815Z"
+    }
+  ]
+}
