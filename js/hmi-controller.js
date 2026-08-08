@@ -1,9 +1,6 @@
-import { generateNonce, generateHMAC } from './crypto-helper.js';
+import { generateNonce, generateHMAC, PLC_SHARED_SECRET } from './crypto-helper.js';
 import { handleNetworkMessage } from './plc-simulation.js';
 import { getCurrentUser } from './auth.js';
-
-// Clave secreta compartida (debe coincidir con la del PLC)
-var PLC_SHARED_SECRET = "PlcSuperSecretKeyOT2026!";
 
 // Registro de tráfico de red virtual para visualización
 let networkTraffic = [];

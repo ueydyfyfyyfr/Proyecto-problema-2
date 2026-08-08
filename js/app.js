@@ -2,7 +2,9 @@ import { initSimulation, PLC_STATE, handleNetworkMessage } from './plc-simulatio
 import { sendSecureCommand, drawConveyorSystem, getNetworkTraffic, logNetworkTraffic } from './hmi-controller.js';
 import { login, logout, getCurrentUser, checkPermission, createUser, deleteUser, getAllUsers, importUsersJSON } from './auth.js';
 import { getLogs, clearLogs } from './audit-log.js';
-import { generateNonce, generateHMAC } from './crypto-helper.js';
+import { generateNonce, generateHMAC, PLC_SHARED_SECRET } from './crypto-helper.js';
+import { renderAIDashboard, renderConnectionIndicator, refreshAgentAnalysis, submitAgentQuestion } from './ai-dashboard.js';
+import { getN8nConfig, saveN8nConfig, sendTelemetry, testConnection, restartAutoTelemetry } from './n8n-connector.js';
 
 // Capturar última trama válida para ataque de replay
 let lastValidPacket = null;
@@ -286,11 +288,13 @@ function applyRBACPermissions() {
   const tabMgr   = document.getElementById('tab-header-manager');
   const tabSec   = document.getElementById('tab-header-security');
   const tabUsers = document.getElementById('tab-header-users');
+  const tabAI    = document.getElementById('tab-header-ai');
   
   if (user.role === 'Operador') {
     tabDash.style.display = 'inline-block';
     tabEng.style.display = 'none';
     tabMgr.style.display = 'none';
+    tabAI.style.display = 'none';
     tabSec.style.display = 'none';
     tabUsers.style.display = 'none';
     switchTab('dashboard');
@@ -298,6 +302,7 @@ function applyRBACPermissions() {
     tabDash.style.display = 'none'; // Acceso exclusivo a métricas
     tabEng.style.display = 'none';
     tabMgr.style.display = 'inline-block';
+    tabAI.style.display = 'inline-block'; // Inteligencia de negocio sobre el nivel ERP
     tabSec.style.display = 'none';
     tabUsers.style.display = 'inline-block'; 
     switchTab('manager');
@@ -305,6 +310,7 @@ function applyRBACPermissions() {
     tabDash.style.display = 'inline-block';
     tabEng.style.display = 'inline-block';
     tabMgr.style.display = 'inline-block';
+    tabAI.style.display = 'inline-block';
     tabSec.style.display = 'inline-block';
     tabUsers.style.display = 'inline-block';
     switchTab('dashboard');
@@ -312,6 +318,7 @@ function applyRBACPermissions() {
     tabDash.style.display = 'inline-block';
     tabEng.style.display = 'inline-block';
     tabMgr.style.display = 'inline-block';
+    tabAI.style.display = 'inline-block';
     tabSec.style.display = 'inline-block';
     tabUsers.style.display = 'inline-block';
     switchTab('users');
@@ -337,9 +344,10 @@ function applyRBACPermissions() {
 }
 
 // Navegación de pestañas
+const TAB_IDS = ['dashboard', 'engineer', 'manager', 'ai', 'security', 'users'];
+
 function switchTab(tabId) {
-  const tabs = ['dashboard', 'engineer', 'manager', 'security', 'users'];
-  tabs.forEach(t => {
+  TAB_IDS.forEach(t => {
     const pane = document.getElementById(`tab-${t}`);
     const btn  = document.getElementById(`tab-header-${t}`);
     if (pane) pane.classList.toggle('hidden', t !== tabId);
@@ -347,6 +355,19 @@ function switchTab(tabId) {
   });
   if (tabId === 'engineer') renderAuditLogs();
   if (tabId === 'users')    renderUsersTable();
+  if (tabId === 'ai')       renderAIDashboard();
+}
+
+// Refresco periódico del dashboard analítico mientras la pestaña está visible.
+// Se desacopla del ciclo de 20 ms del PLC: redibujar gráficos a 50 FPS sería
+// innecesario y penalizaría el rendimiento (RNF-01).
+function startAIDashboardRefresh() {
+  setInterval(() => {
+    const pane = document.getElementById('tab-ai');
+    if (pane && !pane.classList.contains('hidden')) {
+      renderAIDashboard();
+    }
+  }, 3000);
 }
 
 // -------------------------------------------------------------
@@ -401,6 +422,76 @@ async function renderUsersTable() {
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
+}
+
+// -------------------------------------------------------------
+// PESTAÑA DE ANALÍTICA & IA AGÉNTICA (FASE 2)
+// -------------------------------------------------------------
+function initAITab() {
+  // Cargar la configuración guardada del conector en el formulario
+  const cfg = getN8nConfig();
+  document.getElementById('n8n-base-url').value = cfg.baseUrl;
+  document.getElementById('n8n-token').value = cfg.token;
+  document.getElementById('n8n-auto').checked = cfg.autoTelemetry;
+  document.getElementById('n8n-interval').value = cfg.intervalSeconds;
+
+  const msgEl = document.getElementById('n8n-config-msg');
+  const showMsg = (ok, text) => {
+    msgEl.style.color = ok ? 'var(--accent-green)' : '#f87171';
+    msgEl.textContent = text;
+    setTimeout(() => { msgEl.textContent = ''; }, 5000);
+  };
+
+  // Guardar configuración del conector
+  document.getElementById('n8n-config-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveN8nConfig({
+      baseUrl: document.getElementById('n8n-base-url').value.trim(),
+      token: document.getElementById('n8n-token').value.trim(),
+      autoTelemetry: document.getElementById('n8n-auto').checked,
+      intervalSeconds: Number(document.getElementById('n8n-interval').value) || 60
+    });
+    showMsg(true, '✔ Configuración guardada en este navegador.');
+    renderConnectionIndicator();
+  });
+
+  // Probar la conexión con la instancia de n8n
+  document.getElementById('btn-n8n-test').addEventListener('click', async () => {
+    const result = await testConnection();
+    showMsg(result.ok, result.ok
+      ? '✔ Conexión con n8n verificada.'
+      : '⚠️ No se pudo contactar con n8n: ' + result.error);
+  });
+
+  // Solicitar análisis al agente
+  document.getElementById('btn-ai-analyze').addEventListener('click', () => {
+    refreshAgentAnalysis();
+  });
+
+  // Recalcular los KPIs deterministas (no requiere red)
+  document.getElementById('btn-ai-refresh').addEventListener('click', () => {
+    renderAIDashboard();
+  });
+
+  // Envío manual de telemetría
+  document.getElementById('btn-ai-send-telemetry').addEventListener('click', async () => {
+    const result = await sendTelemetry('manual');
+    showMsg(result.ok, result.ok
+      ? '✔ Telemetría enviada a n8n.'
+      : '⚠️ Telemetría no enviada: ' + result.error);
+  });
+
+  // Consulta en lenguaje natural
+  document.getElementById('ai-ask-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('ai-question');
+    if (!input.value.trim()) return;
+    await submitAgentQuestion(input.value);
+  });
+
+  restartAutoTelemetry();
+  renderConnectionIndicator();
+  startAIDashboardRefresh();
 }
 
 // -------------------------------------------------------------
@@ -525,11 +616,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   // 7. Enlace de los botones de pestañas
-  const tabButtons = ['dashboard', 'engineer', 'manager', 'security', 'users'];
-  tabButtons.forEach(t => {
+  TAB_IDS.forEach(t => {
     const btn = document.getElementById(`tab-header-${t}`);
     if (btn) btn.addEventListener('click', () => switchTab(t));
   });
+
+  // 7bis. PESTAÑA DE ANALÍTICA & IA AGÉNTICA (FASE 2)
+  initAITab();
 
   // 8. GESTIÓN DE USUARIOS INTEGRADA (Pestaña Usuarios)
   // ─── Medidor de fortaleza de contraseña ───
@@ -752,7 +845,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const payloadStr = JSON.stringify(payload);
     // Generar HMAC válido para PPARO
-    const correctHmac = await generateHMAC(payloadStr, "PlcSuperSecretKeyOT2026!");
+    const correctHmac = await generateHMAC(payloadStr, PLC_SHARED_SECRET);
     
     // Manipular el comando en el payload enviado
     payload.command = 'PMARCHA';

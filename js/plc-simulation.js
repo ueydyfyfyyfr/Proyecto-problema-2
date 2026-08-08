@@ -1,5 +1,12 @@
-import { verifyHMAC } from './crypto-helper.js';
+import { verifyHMAC, PLC_SHARED_SECRET } from './crypto-helper.js';
 import { logEvent } from './audit-log.js';
+
+// Ventana ciega de arranque exigida por el enunciado del Problema 2 (RF-P-17)
+const STARTUP_BLIND_WINDOW_MS = 5000;
+
+// Cada cuánto se toma una muestra de la serie histórica para la analítica
+const SAMPLE_PERIOD_S = 5;
+const MAX_SAMPLES = 180;
 
 // Variables de estado internas del PLC
 export const PLC_STATE = {
@@ -84,15 +91,39 @@ export const PLC_STATE = {
     alarmBlinkState: false,  // Alternador para el parpadeo
     securityLockdown: false, // Bloqueo por intrusión detectada
     securityLockReason: ''
+  },
+
+  // Acumuladores de telemetría para la capa analítica (stats-engine.js).
+  // Son datos crudos y deterministas: el motor estadístico deriva de aquí
+  // disponibilidad, MTBF, MTTR, utilización, etc.
+  stats: {
+    timeInState: {
+      IDLE: 0, ROTATING: 0, RUNNING: 0,
+      DISCHARGING_C0: 0, DISCHARGING_DEST: 0,
+      ALARM: 0, EMERGENCY_LOCK: 0
+    },
+    alarmsByBelt: { C0: 0, C1: 0, C2: 0, C3: 0 },
+    batchesByDestination: { 1: 0, 2: 0, 3: 0 },
+    securityEvents: {},      // motivo del lockdown → nº de ocurrencias
+    alarmCount: 0,
+    samples: [],             // serie temporal para los gráficos de línea
+    sampleAccumulator: 0
   }
 };
 
-// Clave secreta compartida del PLC (para autenticar comandos HMI)
-var PLC_SHARED_SECRET = "PlcSuperSecretKeyOT2026!";
-
-// Registro de Nonces recibidos para prevenir ataques de Replay
-const receivedNonces = new Set();
+// Registro de Nonces recibidos para prevenir ataques de Replay.
+// Se almacena nonce → timestamp para poder purgar los caducados y evitar
+// que el Set crezca sin límite en sesiones largas (RT-03).
+const receivedNonces = new Map();
 const maxNonceAgeMs = 60000; // Rechazar comandos con timestamps mayores a 60 segundos
+
+// Elimina los nonces cuya trama ya no podría aceptarse por antigüedad
+function purgeExpiredNonces() {
+  const limit = Date.now() - maxNonceAgeMs;
+  for (const [nonce, ts] of receivedNonces) {
+    if (ts < limit) receivedNonces.delete(nonce);
+  }
+}
 
 // Iniciar simulación física
 let simInterval = null;
@@ -117,6 +148,23 @@ export function initSimulation(onStateUpdate) {
       PLC_STATE.physical.runTimeSeconds = m.runTimeSeconds || 0;
       PLC_STATE.physical.batchesProcessed = m.batchesProcessed || 0;
       PLC_STATE.physical.powerConsumptionKWh = m.powerConsumptionKWh || 0;
+    } catch(e) {}
+  }
+
+  // Cargar acumuladores analíticos previos
+  const savedStats = localStorage.getItem('plcStats');
+  if (savedStats) {
+    try {
+      const s = JSON.parse(savedStats);
+      PLC_STATE.stats = {
+        ...PLC_STATE.stats,
+        ...s,
+        timeInState: { ...PLC_STATE.stats.timeInState, ...(s.timeInState || {}) },
+        alarmsByBelt: { ...PLC_STATE.stats.alarmsByBelt, ...(s.alarmsByBelt || {}) },
+        batchesByDestination: { ...PLC_STATE.stats.batchesByDestination, ...(s.batchesByDestination || {}) },
+        samples: Array.isArray(s.samples) ? s.samples : [],
+        sampleAccumulator: 0
+      };
     } catch(e) {}
   }
 
@@ -202,6 +250,8 @@ function updatePhysics(dt) {
             y: 10 + Math.random() * 10
           });
           PLC_STATE.physical.batchesProcessed++;
+          PLC_STATE.stats.batchesByDestination[activeDest] =
+            (PLC_STATE.stats.batchesByDestination[activeDest] || 0) + 1;
         }
         return false; // Remover de Cinta 0
       }
@@ -242,6 +292,34 @@ function updatePhysics(dt) {
       powerConsumptionKWh: PLC_STATE.physical.powerConsumptionKWh
     }));
   }
+
+  // 5. Telemetría analítica: tiempo acumulado en cada estado y serie histórica
+  const st = PLC_STATE.stats;
+  const currentState = PLC_STATE.control.status;
+  st.timeInState[currentState] = (st.timeInState[currentState] || 0) + dt;
+
+  st.sampleAccumulator += dt;
+  if (st.sampleAccumulator >= SAMPLE_PERIOD_S) {
+    st.sampleAccumulator = 0;
+    st.samples.push({
+      t: Date.now(),
+      kwh: Number(PLC_STATE.physical.powerConsumptionKWh.toFixed(5)),
+      batches: PLC_STATE.physical.batchesProcessed,
+      motors: activeMotorsCount,
+      state: currentState
+    });
+    if (st.samples.length > MAX_SAMPLES) st.samples.shift();
+    persistStats();
+  }
+}
+
+// Persiste los acumuladores analíticos para que sobrevivan a un refresco
+function persistStats() {
+  try {
+    localStorage.setItem('plcStats', JSON.stringify(PLC_STATE.stats));
+  } catch (e) {
+    // Cuota de localStorage agotada: la analítica sigue en memoria
+  }
 }
 
 // Lógica de control secuencial del PLC (Programa de automatización)
@@ -261,7 +339,7 @@ function updatePLCLogic(dt) {
   const now = Date.now();
   PLC_STATE.control.alarmBlinkState = Math.floor(now / 250) % 2 === 0; // Frecuencia de 2 Hz (ciclo total 500ms)
 
-  // Ventana de 3 segundos sin evaluar velocidad al arrancar motores
+  // Ventana ciega de arranque: no se evalúa la velocidad durante los primeros 5 s
   for (let key in PLC_STATE.control.startupTimers) {
     if (PLC_STATE.control.startupTimers[key] > 0) {
       PLC_STATE.control.startupTimers[key] -= dt * 1000;
@@ -269,7 +347,7 @@ function updatePLCLogic(dt) {
   }
 
   // 1. Evaluación de fallas de velocidad (Vigilancia de cintas)
-  // Ignoramos durante los primeros 3 segundos de arranque
+  // Ignoramos durante los primeros 5 segundos de arranque
   if (PLC_STATE.control.status !== 'IDLE' && PLC_STATE.control.status !== 'ROTATING' && PLC_STATE.control.status !== 'EMERGENCY_LOCK') {
     // Verificar Cinta 0
     if (PLC_STATE.outputs.MC0 && PLC_STATE.control.startupTimers.C0 <= 0 && !PLC_STATE.inputs.VigC0) {
@@ -310,9 +388,9 @@ function updatePLCLogic(dt) {
         PLC_STATE.outputs.LDesC0 = false;
         PLC_STATE.outputs[`LDesC${targetPos}`] = false;
         
-        // Iniciar ventanas de 3s para ignorar vigilancia
-        PLC_STATE.control.startupTimers.C0 = 3000;
-        PLC_STATE.control.startupTimers[`C${targetPos}`] = 3000;
+        // Iniciar ventanas de 5s para ignorar vigilancia (RF-P-17)
+        PLC_STATE.control.startupTimers.C0 = STARTUP_BLIND_WINDOW_MS;
+        PLC_STATE.control.startupTimers[`C${targetPos}`] = STARTUP_BLIND_WINDOW_MS;
         
         // Iniciar temporizador de 5 segundos para abrir la tolva
         PLC_STATE.control.timer = PLC_STATE.config.hopperOpenDelay * 1000;
@@ -484,6 +562,10 @@ function triggerAlarm(beltKey, msg) {
     PLC_STATE.outputs.MTolCe = true;
   }
   
+  // Telemetría para el motor estadístico (MTBF / alarmas por cinta)
+  PLC_STATE.stats.alarmsByBelt[beltKey] = (PLC_STATE.stats.alarmsByBelt[beltKey] || 0) + 1;
+  PLC_STATE.stats.alarmCount++;
+
   logEvent('WARNING', `ALERTA VIGILANCIA: ${msg}. Deteniendo motor ${beltKey === 'C0' ? 'MC0' : 'MC' + beltKey[1]}.`, 'PLC');
 }
 
@@ -533,6 +615,7 @@ export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
     }
     
     // 2. Validar Nonce para evitar ataques de Replay
+    purgeExpiredNonces();
     const nonce = packet.payload.nonce;
     if (receivedNonces.has(nonce)) {
       triggerSecurityLockdown('ATAQUE_REPLAY_DETECTADO', `Ataque de Replay: Nonce '${nonce}' ya fue procesado previamente.`);
@@ -547,8 +630,8 @@ export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
       return { success: false, error: 'Comando expirado por tiempo' };
     }
     
-    // Registrar el Nonce como utilizado
-    receivedNonces.add(nonce);
+    // Registrar el Nonce como utilizado (con su marca temporal para la purga)
+    receivedNonces.set(nonce, timestamp);
     
     // Ejecutar el comando aprobado por seguridad
     const result = executeCommand(packet.payload);
@@ -675,6 +758,7 @@ function executeCommand(payload) {
 function triggerSecurityLockdown(reason, detailMsg) {
   PLC_STATE.control.securityLockdown = true;
   PLC_STATE.control.securityLockReason = reason;
+  PLC_STATE.stats.securityEvents[reason] = (PLC_STATE.stats.securityEvents[reason] || 0) + 1;
   stopAllMotors();
   logEvent('SECURITY_ALERT', `ALERTA DE SEGURIDAD OT: ${detailMsg}`, 'PLC_FIREWALL', { reason, detailMsg });
 }
