@@ -2,6 +2,7 @@
 const FILES = [
   "js/crypto-helper.js",
   "js/audit-log.js",
+  "js/history-store.js",
   "js/auth.js",
   "js/plc-simulation.js",
   "js/hmi-controller.js",

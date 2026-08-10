@@ -1,6 +1,107 @@
 import { verifyHMAC } from './crypto-helper.js';
 import { logEvent } from './audit-log.js';
 
+// -------------------------------------------------------------
+// INSTRUMENTACIÓN: estructura de acumuladores (contrato TASKS.md §6.1)
+// -------------------------------------------------------------
+
+// Actuadores instrumentados de forma individual (8 salidas de motor)
+export const MOTOR_KEYS = ['MC0', 'MC1', 'MC2', 'MC3', 'MGIzq', 'MGDer', 'MTolAb', 'MTolCe'];
+
+// Estados contabilizados. 'SECURITY_LOCKDOWN' no pertenece a la máquina de estados
+// del PLC: es un modo superpuesto que prevalece mientras el firewall OT mantiene el
+// bloqueo, porque durante ese tiempo la planta está parada aunque control.status
+// siga marcando otra cosa.
+const STATE_KEYS = ['IDLE', 'ROTATING', 'RUNNING', 'DISCHARGING_C0', 'DISCHARGING_DEST', 'ALARM', 'EMERGENCY_LOCK', 'SECURITY_LOCKDOWN'];
+
+// Motivos de rechazo codificados en el firewall OT
+const SECURITY_REASONS = ['COMANDO_NO_FIRMADO', 'INTEGRIDAD_COMPROMETIDA', 'ATAQUE_REPLAY_DETECTADO', 'TRAMA_EXPIRADA', 'FORMATO_CORRUPTO'];
+
+function zeroMap(keys) {
+  const o = {};
+  for (const k of keys) o[k] = 0;
+  return o;
+}
+
+function createDefaultStats() {
+  return {
+    totalElapsedSeconds: 0,       // Tiempo de calendario: denominador de disponibilidad
+    sessionStartedAt: Date.now(), // Marca de inicio de la sesión actual (no se restaura)
+
+    stateTime: zeroMap(STATE_KEYS),    // Segundos acumulados en cada estado
+    stateEntries: zeroMap(STATE_KEYS), // Número de entradas a cada estado
+
+    alarmCount: { C0: 0, C1: 0, C2: 0, C3: 0 }, // Incrementado por flanco
+    firstAlarmAt: null,
+    lastAlarmAt: null,
+
+    motorSeconds: zeroMap(MOTOR_KEYS), // Horas de servicio por actuador
+    motorKWh: zeroMap(MOTOR_KEYS),     // Energía imputada a cada actuador
+    motorCycles: zeroMap(MOTOR_KEYS),  // Arranques (flancos de subida)
+
+    unitsTransferred: 0,                 // Partículas entregadas al destino
+    batchesByDest: { 1: 0, 2: 0, 3: 0 }, // Ciclos productivos por posición
+    scrapCount: 0,                       // Partículas perdidas con el destino parado
+
+    commandCounts: {},                        // Comandos recibidos y verificados, por tipo
+    rejectedCommands: {},                     // Comandos rechazados, por comando intentado
+    securityEvents: zeroMap(SECURITY_REASONS),// Rechazos por tipo de ataque
+    lockdownCount: 0,                         // Entradas en bloqueo del firewall OT
+
+    hopperCycles: 0,        // Aperturas completas de la tolva (flancos de FCTolAb)
+    totalDegreesRotated: 0, // Recorrido angular acumulado de MG (desgaste del reductor)
+
+    loop: { ticks: 0, avgDtMs: 0, maxDtMs: 0, jitterMs: 0 } // Salud del bucle (no se restaura)
+  };
+}
+
+// Restaura los acumulados guardados sobre la estructura por defecto. Toda clave
+// ausente, no numérica o corrupta queda en su valor inicial, de modo que ampliar
+// el contrato más adelante no rompe la carga de datos antiguos.
+function mergeSavedStats(saved) {
+  const fresh = createDefaultStats();
+  if (!saved || typeof saved !== 'object') return fresh;
+
+  const num = v => (typeof v === 'number' && isFinite(v) ? v : 0);
+  const intoMap = (target, src) => {
+    if (!src || typeof src !== 'object') return;
+    for (const k of Object.keys(target)) target[k] = num(src[k]);
+  };
+
+  fresh.totalElapsedSeconds = num(saved.totalElapsedSeconds);
+  fresh.unitsTransferred = num(saved.unitsTransferred);
+  fresh.scrapCount = num(saved.scrapCount);
+  fresh.lockdownCount = num(saved.lockdownCount);
+  fresh.hopperCycles = num(saved.hopperCycles);
+  fresh.totalDegreesRotated = num(saved.totalDegreesRotated);
+  fresh.firstAlarmAt = typeof saved.firstAlarmAt === 'number' ? saved.firstAlarmAt : null;
+  fresh.lastAlarmAt = typeof saved.lastAlarmAt === 'number' ? saved.lastAlarmAt : null;
+
+  intoMap(fresh.stateTime, saved.stateTime);
+  intoMap(fresh.stateEntries, saved.stateEntries);
+  intoMap(fresh.alarmCount, saved.alarmCount);
+  intoMap(fresh.motorSeconds, saved.motorSeconds);
+  intoMap(fresh.motorKWh, saved.motorKWh);
+  intoMap(fresh.motorCycles, saved.motorCycles);
+  intoMap(fresh.batchesByDest, saved.batchesByDest);
+  intoMap(fresh.securityEvents, saved.securityEvents);
+
+  // Mapas de claves abiertas: se copia únicamente lo que sea numérico
+  for (const mapName of ['commandCounts', 'rejectedCommands']) {
+    const src = saved[mapName];
+    if (src && typeof src === 'object') {
+      for (const k of Object.keys(src)) fresh[mapName][k] = num(src[k]);
+    }
+  }
+
+  // 'loop' y 'sessionStartedAt' describen la sesión en curso: no se restauran.
+  return fresh;
+}
+
+// Estado de la iteración anterior, para detectar flancos y transiciones
+let prevMotorState = {};
+let prevEffectiveState = null;
+
 // Variables de estado internas del PLC
 export const PLC_STATE = {
   // Entradas físicas
@@ -52,11 +153,14 @@ export const PLC_STATE = {
     hopperOpenPercent: 0,     // 0 = cerrado, 100 = abierto
     materialOnCinta0: [],     // Partículas de material
     materialOnDest: [],
-    runTimeSeconds: 0,        // Contador de tiempo de uso acumulado
-    batchesProcessed: 0,      // Número de lotes de material procesados
+    runTimeSeconds: 0,        // Tiempo con al menos un motor activo (régimen activo)
+    batchesProcessed: 0,      // Ciclos productivos completados (un ciclo = una descarga con material entregado)
     powerConsumptionKWh: 0,   // Consumo estimado
   },
-  
+
+  // Acumuladores de estadística (contrato completo en TASKS.md §6.1)
+  stats: createDefaultStats(),
+
   // Configuración de temporizadores (ajustable por Ingeniero)
   config: {
     hopperOpenDelay: 5,       // Tiempo para abrir tolva tras M0 (segundos)
@@ -83,24 +187,56 @@ export const PLC_STATE = {
     },
     alarmBlinkState: false,  // Alternador para el parpadeo
     securityLockdown: false, // Bloqueo por intrusión detectada
-    securityLockReason: ''
+    securityLockReason: '',
+    cycleProducedMaterial: false // El ciclo en curso ha entregado material al destino
   }
 };
+
+// Configuración de negocio (tarifa eléctrica, factor de emisión, potencia nominal).
+// Persistida en localStorage['businessConfig']; editable desde la UI a partir de F5.
+export const BUSINESS_CONFIG = {
+  tariffUSDPerKWh: 0.15,
+  co2KgPerKWh: 0.4,
+  motorRatedKW: 1.5
+};
+
+function loadBusinessConfig() {
+  const saved = localStorage.getItem('businessConfig');
+  if (saved) {
+    try {
+      Object.assign(BUSINESS_CONFIG, JSON.parse(saved));
+    } catch (e) {}
+  }
+}
 
 // Clave secreta compartida del PLC (para autenticar comandos HMI)
 var PLC_SHARED_SECRET = "PlcSuperSecretKeyOT2026!";
 
-// Registro de Nonces recibidos para prevenir ataques de Replay
-const receivedNonces = new Set();
+// Registro de Nonces recibidos para prevenir ataques de Replay (nonce → instante de recepción)
+const receivedNonces = new Map();
 const maxNonceAgeMs = 60000; // Rechazar comandos con timestamps mayores a 60 segundos
+
+// Purga los nonces fuera de la ventana de validez. La ventana es exactamente la misma
+// que la de validación de timestamp, así que un nonce purgado ya no puede reutilizarse:
+// su trama sería rechazada por 'TRAMA_EXPIRADA'.
+function purgeExpiredNonces() {
+  const cutoff = Date.now() - maxNonceAgeMs;
+  for (const [nonce, seenAt] of receivedNonces) {
+    if (seenAt < cutoff) receivedNonces.delete(nonce);
+  }
+}
 
 // Iniciar simulación física
 let simInterval = null;
+let flushInterval = null;
 
 // Inicializa o reinicia la simulación
 export function initSimulation(onStateUpdate) {
   if (simInterval) clearInterval(simInterval);
-  
+  if (flushInterval) clearInterval(flushInterval);
+
+  loadBusinessConfig();
+
   // Cargar configuraciones guardadas
   const savedConfig = localStorage.getItem('plcConfig');
   if (savedConfig) {
@@ -120,13 +256,37 @@ export function initSimulation(onStateUpdate) {
     } catch(e) {}
   }
 
+  // Cargar acumuladores de estadística con merge defensivo
+  let parsedStats = null;
+  const savedStats = localStorage.getItem('plcStats');
+  if (savedStats) {
+    try { parsedStats = JSON.parse(savedStats); } catch(e) {}
+  }
+  PLC_STATE.stats = mergeSavedStats(parsedStats);
+
+  // Reiniciar los detectores de flanco de la sesión anterior
+  prevMotorState = {};
+  prevEffectiveState = null;
+
+  // Guardado periódico de métricas (sustituye a la escritura por ciclo)
+  flushInterval = setInterval(flushMetrics, 5000);
+
   // Bucle de simulación a 50 FPS (cada 20 ms)
   let lastTime = Date.now();
   simInterval = setInterval(() => {
     const now = Date.now();
     const dt = (now - lastTime) / 1000; // Diferencial de tiempo en segundos
     lastTime = now;
-    
+
+    // La estadística se actualiza antes que nada y aislada del control: ninguna
+    // salida temprana de la lógica del PLC debe hacerle perder tiempo, y ningún
+    // fallo suyo puede llegar a detener la planta.
+    try {
+      updateStats(dt);
+    } catch (e) {
+      console.warn('Fallo al acumular estadística (el control continúa):', e.message);
+    }
+
     updatePhysics(dt);
     updatePLCLogic(dt);
     
@@ -134,8 +294,48 @@ export function initSimulation(onStateUpdate) {
   }, 20);
 }
 
+// Estado atribuible a efectos de estadística. El bloqueo del firewall OT prevalece
+// sobre la máquina de estados: mientras dura, la planta está parada aunque
+// control.status conserve el valor que tuviera al producirse la intrusión.
+export function effectiveState() {
+  return PLC_STATE.control.securityLockdown ? 'SECURITY_LOCKDOWN' : PLC_STATE.control.status;
+}
+
+// Acumuladores que deben avanzar en cada ciclo pase lo que pase en la lógica de control.
+function updateStats(dt) {
+  const s = PLC_STATE.stats;
+
+  // Tiempo de calendario: avanza siempre, haya o no motores activos
+  s.totalElapsedSeconds += dt;
+
+  // Tiempo por estado y detección de transición
+  const state = effectiveState();
+  if (s.stateTime[state] === undefined) s.stateTime[state] = 0;
+  s.stateTime[state] += dt;
+
+  if (state !== prevEffectiveState) {
+    s.stateEntries[state] = (s.stateEntries[state] || 0) + 1;
+    window.dispatchEvent(new CustomEvent('plc-state-change', {
+      detail: { from: prevEffectiveState, to: state, at: Date.now() }
+    }));
+    prevEffectiveState = state;
+  }
+
+  // Salud del bucle: media móvil exponencial de dt y desviación respecto a los 20 ms
+  // nominales. Solo es representativa con la pestaña en primer plano: en segundo
+  // plano el navegador estrangula setInterval y dt se dispara.
+  const dtMs = dt * 1000;
+  s.loop.ticks++;
+  s.loop.avgDtMs = s.loop.ticks === 1 ? dtMs : s.loop.avgDtMs + (dtMs - s.loop.avgDtMs) * 0.05;
+  s.loop.jitterMs = Math.abs(s.loop.avgDtMs - 20);
+  if (dtMs > s.loop.maxDtMs) s.loop.maxDtMs = dtMs;
+}
+
 // Simulación de la física del sistema (movimiento real, tolva, material)
 function updatePhysics(dt) {
+  const angleBefore = PLC_STATE.physical.currentAngle;
+  const hopperFullyOpenBefore = PLC_STATE.inputs.FCTolAb;
+
   // 1. Simulación del giro de la plataforma (MG)
   const targetAngle = (PLC_STATE.physical.targetPosition - 1) * 90; // Pos1=0, Pos2=90, Pos3=180
   const rotationSpeed = 45; // 45 grados por segundo
@@ -156,7 +356,10 @@ function updatePhysics(dt) {
   PLC_STATE.inputs.FC1 = Math.abs(PLC_STATE.physical.currentAngle - 0) < 1;
   PLC_STATE.inputs.FC2 = Math.abs(PLC_STATE.physical.currentAngle - 90) < 1;
   PLC_STATE.inputs.FC3 = Math.abs(PLC_STATE.physical.currentAngle - 180) < 1;
-  
+
+  // Recorrido angular acumulado del motor de giro (base del desgaste del reductor)
+  PLC_STATE.stats.totalDegreesRotated += Math.abs(PLC_STATE.physical.currentAngle - angleBefore);
+
   // 2. Simulación de la compuerta de la Tolva
   const hopperSpeed = 50; // 50% por segundo
   if (PLC_STATE.outputs.MTolAb) {
@@ -174,7 +377,12 @@ function updatePhysics(dt) {
   // Finales de carrera de la tolva
   PLC_STATE.inputs.FCTolAb = PLC_STATE.physical.hopperOpenPercent >= 99;
   PLC_STATE.inputs.FCTolCe = PLC_STATE.physical.hopperOpenPercent <= 1;
-  
+
+  // Flanco de apertura completa: un ciclo de tolva
+  if (!hopperFullyOpenBefore && PLC_STATE.inputs.FCTolAb) {
+    PLC_STATE.stats.hopperCycles++;
+  }
+
   // 3. Simulación de flujo de material en las cintas
   // Generar material desde la tolva si está abierta y las cintas están activas
   if (PLC_STATE.physical.hopperOpenPercent > 10 && PLC_STATE.outputs.MC0) {
@@ -196,12 +404,18 @@ function updatePhysics(dt) {
         const activeDest = PLC_STATE.physical.targetPosition;
         const destMotor = PLC_STATE.outputs[`MC${activeDest}`];
         if (destMotor) {
-          PLC_STATE.physical.materialOnDest.push({ 
-            cinta: activeDest, 
+          PLC_STATE.physical.materialOnDest.push({
+            cinta: activeDest,
             x: 0,
             y: 10 + Math.random() * 10
           });
-          PLC_STATE.physical.batchesProcessed++;
+          // Unidad física entregada. El lote (evento de negocio) se contabiliza
+          // al cerrar el ciclo productivo, no aquí.
+          PLC_STATE.stats.unitsTransferred++;
+          PLC_STATE.control.cycleProducedMaterial = true;
+        } else {
+          // La cinta de destino está parada: el material cae al vacío y se pierde
+          PLC_STATE.stats.scrapCount++;
         }
         return false; // Remover de Cinta 0
       }
@@ -221,27 +435,66 @@ function updatePhysics(dt) {
   PLC_STATE.physical.materialOnDest = PLC_STATE.physical.materialOnDest.filter(m => m.x < 1.0);
   
   // 4. Acumular métricas operativas
+  // Un único recorrido por los 8 actuadores alimenta a la vez el desglose por motor
+  // y el total de planta, de modo que la suma de motorKWh cuadra con
+  // powerConsumptionKWh por construcción y no por coincidencia.
   let activeMotorsCount = 0;
-  if (PLC_STATE.outputs.MC0) activeMotorsCount++;
-  if (PLC_STATE.outputs.MC1) activeMotorsCount++;
-  if (PLC_STATE.outputs.MC2) activeMotorsCount++;
-  if (PLC_STATE.outputs.MC3) activeMotorsCount++;
-  if (PLC_STATE.outputs.MGIzq || PLC_STATE.outputs.MGDer) activeMotorsCount++;
-  if (PLC_STATE.outputs.MTolAb || PLC_STATE.outputs.MTolCe) activeMotorsCount++;
-  
+  let instantKW = 0;
+
+  for (const key of MOTOR_KEYS) {
+    const isOn = !!PLC_STATE.outputs[key];
+
+    if (isOn) {
+      activeMotorsCount++;
+      instantKW += BUSINESS_CONFIG.motorRatedKW;
+      PLC_STATE.stats.motorSeconds[key] += dt;
+      PLC_STATE.stats.motorKWh[key] += (BUSINESS_CONFIG.motorRatedKW * dt) / 3600;
+    }
+
+    // Flanco de subida: un arranque del actuador
+    if (isOn && !prevMotorState[key]) {
+      PLC_STATE.stats.motorCycles[key]++;
+    }
+    prevMotorState[key] = isOn;
+  }
+
   if (activeMotorsCount > 0) {
     PLC_STATE.physical.runTimeSeconds += dt;
-    // Consumo eléctrico estimado: 1.5 kW por motor encendido
-    const powerKW = activeMotorsCount * 1.5;
-    PLC_STATE.physical.powerConsumptionKWh += (powerKW * dt) / 3600;
-    
-    // Guardar métricas periódicamente
+    PLC_STATE.physical.powerConsumptionKWh += (instantKW * dt) / 3600;
+  }
+  // La persistencia NO se hace aquí: ver flushMetrics(), invocado cada 5 s
+  // y en eventos clave. Escribir en localStorage a 50 Hz degradaba la UI.
+}
+
+// Persiste los acumulados en localStorage. Invocada por temporizador cada 5 s y
+// en eventos clave: cierre de ciclo, alarma, bloqueo de seguridad y cierre de sesión.
+export function flushMetrics() {
+  try {
     localStorage.setItem('plcMetrics', JSON.stringify({
       runTimeSeconds: PLC_STATE.physical.runTimeSeconds,
       batchesProcessed: PLC_STATE.physical.batchesProcessed,
       powerConsumptionKWh: PLC_STATE.physical.powerConsumptionKWh
     }));
+    localStorage.setItem('plcStats', JSON.stringify(PLC_STATE.stats));
+  } catch (e) {
+    console.warn('No se pudieron guardar las métricas:', e.message);
   }
+}
+
+// Cierra el ciclo productivo en curso. Cuenta el lote solo si llegó a entregarse
+// material a la cinta de destino; un ciclo abortado en vacío no suma.
+function finishProductionCycle(destPosition) {
+  if (PLC_STATE.control.cycleProducedMaterial) {
+    PLC_STATE.physical.batchesProcessed++;
+    PLC_STATE.stats.batchesByDest[destPosition] = (PLC_STATE.stats.batchesByDest[destPosition] || 0) + 1;
+    PLC_STATE.control.cycleProducedMaterial = false;
+  }
+  flushMetrics();
+}
+
+// Descarta el ciclo en curso sin contabilizarlo (acuse de alarma, retorno a CI).
+function discardProductionCycle() {
+  PLC_STATE.control.cycleProducedMaterial = false;
 }
 
 // Lógica de control secuencial del PLC (Programa de automatización)
@@ -269,8 +522,10 @@ function updatePLCLogic(dt) {
   }
 
   // 1. Evaluación de fallas de velocidad (Vigilancia de cintas)
-  // Ignoramos durante los primeros 3 segundos de arranque
-  if (PLC_STATE.control.status !== 'IDLE' && PLC_STATE.control.status !== 'ROTATING' && PLC_STATE.control.status !== 'EMERGENCY_LOCK') {
+  // Ignoramos durante los primeros 3 segundos de arranque.
+  // 'ALARM' queda excluido: la planta ya está detenida y reevaluar allí permitía
+  // que un motor forzado sobre un sensor en falla disparase la alarma cada 20 ms.
+  if (PLC_STATE.control.status !== 'IDLE' && PLC_STATE.control.status !== 'ROTATING' && PLC_STATE.control.status !== 'ALARM' && PLC_STATE.control.status !== 'EMERGENCY_LOCK') {
     // Verificar Cinta 0
     if (PLC_STATE.outputs.MC0 && PLC_STATE.control.startupTimers.C0 <= 0 && !PLC_STATE.inputs.VigC0) {
       triggerAlarm('C0', 'Pérdida de velocidad en Cinta 0 (VigC0 bajo)');
@@ -377,6 +632,7 @@ function updatePLCLogic(dt) {
         PLC_STATE.outputs[`LDesC${activeDest}`] = true;
         
         PLC_STATE.control.status = 'IDLE';
+        finishProductionCycle(activeDest);
         logEvent('INFO', `Descarga de Cinta de Destino ${activeDest} completada. Proceso en REPOSO.`, 'PLC');
       }
       updateStatusLamps();
@@ -466,8 +722,21 @@ function stopAllMotors() {
 
 // Activar alarma OT de velocidad
 function triggerAlarm(beltKey, msg) {
+  // Idempotente: si la alarma de esa cinta ya está activa no se repite el evento.
+  // Sin esto, el contador de alarmas y el MTBF/MTTR quedarían falseados.
+  if (PLC_STATE.control.alarms[beltKey]) return;
+
   PLC_STATE.control.status = 'ALARM';
   PLC_STATE.control.alarms[beltKey] = true;
+
+  // Contabilización por flanco: base de MTBF, MTTR y "alarmas por cinta"
+  const alarmAt = Date.now();
+  PLC_STATE.stats.alarmCount[beltKey] = (PLC_STATE.stats.alarmCount[beltKey] || 0) + 1;
+  if (PLC_STATE.stats.firstAlarmAt === null) PLC_STATE.stats.firstAlarmAt = alarmAt;
+  PLC_STATE.stats.lastAlarmAt = alarmAt;
+  window.dispatchEvent(new CustomEvent('plc-alarm', {
+    detail: { belt: beltKey, message: msg, at: alarmAt }
+  }));
   
   // Detener la cinta fallida de inmediato
   if (beltKey === 'C0') {
@@ -485,6 +754,7 @@ function triggerAlarm(beltKey, msg) {
   }
   
   logEvent('WARNING', `ALERTA VIGILANCIA: ${msg}. Deteniendo motor ${beltKey === 'C0' ? 'MC0' : 'MC' + beltKey[1]}.`, 'PLC');
+  flushMetrics();
 }
 
 // Aceptar / Limpiar alarma (Acuse de recibo con Paro)
@@ -506,6 +776,9 @@ function clearAlarms() {
   PLC_STATE.outputs.LDescgC3 = false;
   
   PLC_STATE.control.status = 'IDLE';
+  // El ciclo se interrumpió por alarma o retorno a CI: no se contabiliza como lote
+  discardProductionCycle();
+  flushMetrics();
   logEvent('INFO', 'Alarma acusada y reseteada por operador. Sistema en REPOSO.', 'PLC');
 }
 
@@ -515,11 +788,14 @@ function clearAlarms() {
 
 export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
   try {
+    // Descartar los nonces que ya han salido de la ventana de validez
+    purgeExpiredNonces();
+
     const packet = JSON.parse(encryptedOrSignedMessageStr);
-    
+
     // Verificación de integridad: el paquete debe tener payload y hmac
     if (!packet.payload || !packet.hmac) {
-      triggerSecurityLockdown('COMANDO_NO_FIRMADO', 'Se recibió un comando sin firma digital HMAC. Posible manipulación de red.');
+      triggerSecurityLockdown('COMANDO_NO_FIRMADO', 'Se recibió un comando sin firma digital HMAC. Posible manipulación de red.', packet.payload && packet.payload.command);
       return { success: false, error: 'Comando no firmado' };
     }
     
@@ -528,14 +804,14 @@ export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
     // 1. Validar HMAC con la clave secreta
     const isValidHMAC = await verifyHMAC(payloadStr, packet.hmac, PLC_SHARED_SECRET);
     if (!isValidHMAC) {
-      triggerSecurityLockdown('INTEGRIDAD_COMPROMETIDA', `Firma HMAC inválida. Se intentó ejecutar: ${packet.payload.command || 'unknown'}.`);
+      triggerSecurityLockdown('INTEGRIDAD_COMPROMETIDA', `Firma HMAC inválida. Se intentó ejecutar: ${packet.payload.command || 'unknown'}.`, packet.payload.command);
       return { success: false, error: 'Firma digital no coincide (Tampering bloqueado)' };
     }
     
     // 2. Validar Nonce para evitar ataques de Replay
     const nonce = packet.payload.nonce;
     if (receivedNonces.has(nonce)) {
-      triggerSecurityLockdown('ATAQUE_REPLAY_DETECTADO', `Ataque de Replay: Nonce '${nonce}' ya fue procesado previamente.`);
+      triggerSecurityLockdown('ATAQUE_REPLAY_DETECTADO', `Ataque de Replay: Nonce '${nonce}' ya fue procesado previamente.`, packet.payload.command);
       return { success: false, error: 'Replay Attack detectado y bloqueado' };
     }
     
@@ -543,12 +819,12 @@ export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
     const timestamp = packet.payload.timestamp;
     const now = Date.now();
     if (Math.abs(now - timestamp) > maxNonceAgeMs) {
-      triggerSecurityLockdown('TRAMA_EXPIRADA', `Trama expirada por retardo temporal: Delta de ${Math.abs(now - timestamp)}ms.`);
+      triggerSecurityLockdown('TRAMA_EXPIRADA', `Trama expirada por retardo temporal: Delta de ${Math.abs(now - timestamp)}ms.`, packet.payload.command);
       return { success: false, error: 'Comando expirado por tiempo' };
     }
     
-    // Registrar el Nonce como utilizado
-    receivedNonces.add(nonce);
+    // Registrar el Nonce como utilizado, con el instante de recepción para poder purgarlo
+    receivedNonces.set(nonce, Date.now());
     
     // Ejecutar el comando aprobado por seguridad
     const result = executeCommand(packet.payload);
@@ -564,6 +840,10 @@ export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
 function executeCommand(payload) {
   const { command, args, user } = payload;
   
+  // Cuenta comandos RECIBIDOS y verificados, no comandos con efecto: un PMARCHA
+  // enviado fuera de IDLE se contabiliza aunque la máquina de estados lo ignore.
+  PLC_STATE.stats.commandCounts[command] = (PLC_STATE.stats.commandCounts[command] || 0) + 1;
+
   logEvent('OPERATION', `Comando '${command}' recibido y verificado por firma HMAC (Nonce: ${payload.nonce}).`, user);
   
   switch (command) {
@@ -590,6 +870,8 @@ function executeCommand(payload) {
         // Parada forzada inmediata de todo el proceso
         stopAllMotors();
         PLC_STATE.control.status = 'IDLE';
+        // El ciclo se aborta, pero si llegó a entregar material cuenta como lote
+        finishProductionCycle(PLC_STATE.physical.targetPosition);
         logEvent('INFO', 'Secuencia de parada abortada por operador. Motores apagados inmediatamente.', 'PLC');
       }
       break;
@@ -672,9 +954,25 @@ function executeCommand(payload) {
 }
 
 // Disparar bloqueo por intrusión (Lockdown de Seguridad OT)
-function triggerSecurityLockdown(reason, detailMsg) {
+function triggerSecurityLockdown(reason, detailMsg, attemptedCommand) {
+  // El contador de lockdowns cuenta ENTRADAS en bloqueo, no rechazos: los intentos
+  // sucesivos con el firewall ya cerrado suman en securityEvents, no aquí.
+  if (!PLC_STATE.control.securityLockdown) {
+    PLC_STATE.stats.lockdownCount++;
+  }
+  PLC_STATE.stats.securityEvents[reason] = (PLC_STATE.stats.securityEvents[reason] || 0) + 1;
+
+  const rejectedKey = attemptedCommand || 'DESCONOCIDO';
+  PLC_STATE.stats.rejectedCommands[rejectedKey] = (PLC_STATE.stats.rejectedCommands[rejectedKey] || 0) + 1;
+
   PLC_STATE.control.securityLockdown = true;
   PLC_STATE.control.securityLockReason = reason;
   stopAllMotors();
+
+  const at = Date.now();
   logEvent('SECURITY_ALERT', `ALERTA DE SEGURIDAD OT: ${detailMsg}`, 'PLC_FIREWALL', { reason, detailMsg });
+  window.dispatchEvent(new CustomEvent('plc-lockdown', {
+    detail: { reason, message: detailMsg, command: rejectedKey, at }
+  }));
+  flushMetrics();
 }

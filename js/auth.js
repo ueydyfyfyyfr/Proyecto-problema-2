@@ -9,6 +9,7 @@
 
 import { verifyPassword, createCredential } from './crypto-helper.js';
 import { logEvent } from './audit-log.js';
+import { flushMetrics } from './plc-simulation.js';
 
 // Cache en memoria de los usuarios cargados
 let usersCache = null;
@@ -159,6 +160,9 @@ export async function login(username, password) {
     username: key,
     role: user.role,
     name: user.name,
+    // Sin esto checkPermission() leía siempre un array vacío y el checklist
+    // de capacidades del Operador no tenía ningún efecto real.
+    capabilities: user.capabilities || [],
     isSystem: user.isSystem || false
   };
 
@@ -171,6 +175,8 @@ export function logout() {
   if (currentUser) {
     logEvent('INFO', `Sesión cerrada.`, currentUser.name + ' (' + currentUser.role + ')');
   }
+  // Consolidar los acumulados antes de abandonar la sesión
+  flushMetrics();
   currentUser = null;
   localStorage.removeItem('currentUser');
 }
@@ -315,9 +321,13 @@ export function checkPermission(action) {
       return R === 'Supervisor' || R === 'Admin';
     case 'VIEW_METRICS':    
       return R === 'Gerente' || R === 'Admin';
-    case 'MANAGE_USERS':    
+    case 'MANAGE_USERS':
       return R === 'Admin' || R === 'Gerente' || R === 'Supervisor';
-    default:                
+    case 'VIEW_ANALYTICS':
+      return R === 'Admin' || R === 'Gerente' || R === 'Supervisor';
+    case 'USE_AI_ASSISTANT':
+      return true; // Cualquier rol autenticado; el contexto se filtra por rol
+    default:
       return false;
   }
 }
