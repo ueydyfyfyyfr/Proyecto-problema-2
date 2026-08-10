@@ -40,7 +40,7 @@
       <form id="login-form">
         <div class="form-group">
           <label class="form-label" for="login-username">Usuario</label>
-          <input class="form-input" type="text" id="login-username" placeholder="Ej: operador, ingeniero..." required>
+          <input class="form-input" type="text" id="login-username" placeholder="Ej: admin" required>
         </div>
         <div class="form-group">
           <label class="form-label" for="login-password">Contraseña</label>
@@ -52,12 +52,19 @@
       </form>
 
       <div class="role-credentials-box">
-        <h4>Credenciales de Prueba (Simulación RBAC):</h4>
+        <h4>Credenciales de Acceso:</h4>
         <ul>
-          <li>👑 <strong>Admin:</strong> <code>admin</code> / <code>manager123</code> (Super Usuario)</li>
-          <li>👤 <strong>Operador:</strong> <code>operador</code> / <code>operator123</code> (Control básico)</li>
-          <li>🛠️ <strong>Supervisor:</strong> <code>ingeniero</code> / <code>engineer123</code> (Config/Forzado/Logs)</li>
+          <li>👑 <strong>Admin:</strong> <code>admin</code> / <code>admin123</code> (único usuario preexistente)</li>
         </ul>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+          Los demás roles se crean desde <strong>👥 Gestión de Usuarios</strong> respetando la pirámide
+          de automatización: Admin → Gerente → Supervisor → Operador. Cada rol solo puede crear el
+          nivel inmediatamente inferior.
+        </p>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">
+          ℹ️ El Admin no opera la planta: para usar los mandos, cree un <strong>Supervisor</strong>
+          (o un Operador con la capacidad <em>Control Manual</em>) e inicie sesión con él.
+        </p>
       </div>
     </div>
   </section>
@@ -102,6 +109,8 @@
           <div class="panel-card controls-layout">
             <h3 class="panel-title">Mando Operación</h3>
             
+            <div id="control-permission-hint" style="display: none; font-size: 12px; line-height: 1.5; color: var(--accent-yellow); background: rgba(0,0,0,0.18); border: 1px solid var(--border-color); border-radius: 4px; padding: 10px; margin-bottom: 10px;"></div>
+
             <button id="btn-marcha" class="btn-ctrl btn-marcha">▶ Marcha (PMarcha)</button>
             <button id="btn-paro" class="btn-ctrl btn-paro">⏸ Paro (PParo)</button>
             <button id="btn-selec" class="btn-ctrl btn-selec">🔄 Selec (PSelec)</button>
@@ -499,7 +508,7 @@
           <div class="kpi-card">
             <span class="kpi-title">Lotes Procesados</span>
             <span class="kpi-value" id="kpi-batches">0</span>
-            <span class="kpi-sub">Total de descarga a cintas de destino</span>
+            <span class="kpi-sub">Ciclos productivos completados con entrega de material</span>
           </div>
           
           <div class="kpi-card">
@@ -511,7 +520,7 @@
           <div class="kpi-card">
             <span class="kpi-title">Costo Financiero Estimado</span>
             <span class="kpi-value" id="kpi-cost">$0.00 USD</span>
-            <span class="kpi-sub">Tarifa fija industrial ($0.15 / kWh)</span>
+            <span class="kpi-sub" id="kpi-cost-sub">Tarifa industrial configurable</span>
           </div>
           
         </div>

@@ -1,7 +1,8 @@
-import { initSimulation, PLC_STATE, handleNetworkMessage } from './plc-simulation.js';
+import { initSimulation, PLC_STATE, handleNetworkMessage, BUSINESS_CONFIG, effectiveState, MOTOR_KEYS } from './plc-simulation.js';
 import { sendSecureCommand, drawConveyorSystem, getNetworkTraffic, logNetworkTraffic } from './hmi-controller.js';
 import { login, logout, getCurrentUser, checkPermission, createUser, deleteUser, getAllUsers, importUsersJSON } from './auth.js';
 import { getLogs, clearLogs } from './audit-log.js';
+import { HistoryStore } from './history-store.js';
 import { generateNonce, generateHMAC } from './crypto-helper.js';
 
 // Capturar última trama válida para ataque de replay
@@ -20,6 +21,54 @@ window.addEventListener('network-traffic-updated', (e) => {
 window.addEventListener('audit-log-updated', () => {
   renderAuditLogs();
 });
+
+// -------------------------------------------------------------
+// MUESTREO DEL HISTORIAL (contrato TASKS.md §6.2)
+// -------------------------------------------------------------
+
+const HISTORY_SAMPLE_INTERVAL_MS = 5000;
+let historySampler = null;
+
+// Arma la muestra desde PLC_STATE. Vive en app.js y no en plc-simulation.js
+// para que la simulación no dependa del historial (decisión de T-F2-2).
+function buildHistorySample() {
+  const stats = PLC_STATE.stats;
+
+  let activeMotors = 0;
+  for (const key of MOTOR_KEYS) {
+    if (PLC_STATE.outputs[key]) activeMotors++;
+  }
+
+  // 'alarmCount' del contrato es el total agregado de las cuatro cintas
+  let alarmCount = 0;
+  for (const key in stats.alarmCount) {
+    alarmCount += stats.alarmCount[key];
+  }
+
+  return {
+    t: Date.now(),
+    status: effectiveState(),   // el bloqueo del firewall OT prevalece sobre control.status
+    batches: PLC_STATE.physical.batchesProcessed,
+    units: stats.unitsTransferred,
+    scrap: stats.scrapCount,
+    kWh: PLC_STATE.physical.powerConsumptionKWh,
+    activeMotors,
+    alarmCount
+  };
+}
+
+// Temporizador propio de 5 s, deliberadamente desacoplado del bucle de 50 Hz:
+// el historial no debe encarecer el ciclo de control ni depender de su cadencia.
+function startHistorySampling() {
+  if (historySampler) clearInterval(historySampler);
+  historySampler = setInterval(() => {
+    try {
+      HistoryStore.push(buildHistorySample());
+    } catch (e) {
+      console.warn('No se pudo registrar la muestra de historial:', e.message);
+    }
+  }, HISTORY_SAMPLE_INTERVAL_MS);
+}
 
 // Función de actualización de la UI invocada en cada ciclo de la simulación
 function updateUI(state) {
@@ -72,8 +121,8 @@ function updateUI(state) {
   document.getElementById('kpi-batches').innerText = state.physical.batchesProcessed;
   document.getElementById('kpi-power').innerText = state.physical.powerConsumptionKWh.toFixed(4) + ' kWh';
   
-  // Costo financiero estimado: 0.15 USD por KWh
-  const cost = state.physical.powerConsumptionKWh * 0.15;
+  // Costo financiero estimado según la tarifa configurada en BUSINESS_CONFIG
+  const cost = state.physical.powerConsumptionKWh * BUSINESS_CONFIG.tariffUSDPerKWh;
   document.getElementById('kpi-cost').innerText = '$' + cost.toFixed(4) + ' USD';
   
   // Actualizar controles de forzado en el panel del Ingeniero
@@ -301,7 +350,7 @@ function applyRBACPermissions() {
     tabSec.style.display = 'none';
     tabUsers.style.display = 'inline-block'; 
     switchTab('manager');
-  } else if (user.role === 'Supervisor' || user.role === 'Ingeniero') {
+  } else if (user.role === 'Supervisor') {
     tabDash.style.display = 'inline-block';
     tabEng.style.display = 'inline-block';
     tabMgr.style.display = 'inline-block';
@@ -324,12 +373,27 @@ function applyRBACPermissions() {
   document.getElementById('btn-selec').disabled = !basicControlsEnabled;
   document.getElementById('btn-emer').disabled = !basicControlsEnabled;
   document.getElementById('btn-reset-ci').disabled = !basicControlsEnabled;
-  
+
+  // Explicar por qué los mandos están bloqueados. Admin y Gerente no operan la
+  // planta por separación de funciones OT: sin este aviso los botones quedaban
+  // inertes sin explicación alguna.
+  const ctrlHint = document.getElementById('control-permission-hint');
+  if (ctrlHint) {
+    if (basicControlsEnabled) {
+      ctrlHint.style.display = 'none';
+    } else {
+      ctrlHint.style.display = 'block';
+      ctrlHint.innerHTML = user.role === 'Operador'
+        ? '🔒 Su cuenta de Operador no tiene la capacidad <strong>Control Manual</strong>. Solicite a un Supervisor que la habilite.'
+        : `🔒 El rol <strong>${user.role}</strong> no opera la planta (separación de funciones OT). Inicie sesión como <strong>Supervisor</strong> u <strong>Operador con Control Manual</strong> para usar los mandos.`;
+    }
+  }
+
   // Renderizar registros de auditoría si corresponde
   renderAuditLogs();
-  
-  // Cargar valores de temporizadores en el panel de Ingeniero
-  if (user.role === 'Ingeniero') {
+
+  // Cargar valores de temporizadores en el panel de Ingeniería
+  if (user.role === 'Supervisor') {
     document.getElementById('cfg-hopper-delay').value = PLC_STATE.config.hopperOpenDelay;
     document.getElementById('cfg-cinta0-time').value = PLC_STATE.config.cinta0DischargeTime;
     document.getElementById('cfg-dest-time').value = PLC_STATE.config.destDischargeTime;
@@ -366,7 +430,7 @@ async function renderUsersTable() {
 
   const users = await getAllUsers();
   const rows = users.map(u => {
-    const roleClass = u.role === 'Ingeniero' ? 'log-op' : (u.role === 'Gerente' ? 'log-warning' : 'log-info');
+    const roleClass = u.role === 'Supervisor' ? 'log-op' : (u.role === 'Gerente' ? 'log-warning' : 'log-info');
     const lockIcon  = u.isSystem ? '🔒' : '👤';
     const createdAt = u.createdAt ? new Date(u.createdAt).toLocaleDateString('es') : 'Sistema';
     const deleteBtn = u.isSystem
@@ -410,7 +474,16 @@ async function renderUsersTable() {
 document.addEventListener('DOMContentLoaded', () => {
   // Inicializar simulación con callback de actualización
   initSimulation(updateUI);
-  
+
+  // Poblar la serie temporal que consumirán stats-engine (F3) y el dashboard (F5)
+  startHistorySampling();
+
+  // Reflejar la tarifa realmente configurada, no un literal en el HTML
+  const costSub = document.getElementById('kpi-cost-sub');
+  if (costSub) {
+    costSub.innerText = `Tarifa industrial ($${BUSINESS_CONFIG.tariffUSDPerKWh} / kWh)`;
+  }
+
   // Comprobar si hay sesión previa
   applyRBACPermissions();
   

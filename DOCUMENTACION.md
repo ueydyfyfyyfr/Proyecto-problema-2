@@ -301,4 +301,126 @@ El Admin debe crear el resto de la jerarquía desde el panel de Gestión de Usua
 
 ---
 
+## 9. Notas de Implementación (Fase 0 — Fiabilidad de Métricas)
+
+### 9.1 Paso obligatorio de compilación
+
+`index.html` carga **`bundle.js`**, no los módulos de `js/`. Los archivos de `js/` son la
+fuente, pero el navegador no los ejecuta directamente. Por tanto:
+
+> **Toda modificación en `js/` exige ejecutar `node build_bundle.js` antes de probar.**
+
+Los módulos nuevos deben añadirse al array `FILES` de `build_bundle.js` en el orden correcto
+de dependencias, y respetar el estilo que soporta su *stripper*: `export function|class|const|let|var`
+al inicio de línea. No se admite `export { a, b }` a mitad de archivo ni `export default` de expresiones.
+
+### 9.2 Cambio de semántica: "Lotes Procesados"
+
+Hasta la Fase 0, `batchesProcessed` se incrementaba **una vez por partícula** transferida de la
+Cinta 0 al destino (unas 7,5 por segundo), de modo que el KPI mostraba cifras de tres o cuatro
+dígitos en pocos minutos. Cualquier métrica derivada (lotes/hora, kWh por lote, OEE) quedaba inflada.
+
+A partir de la Fase 0:
+
+| Contador | Significado | Dónde |
+|---|---|---|
+| `physical.batchesProcessed` | **Ciclos productivos completados**: un ciclo que llegó a entregar material y volvió a `IDLE` | KPI "Lotes Procesados" |
+| `stats.unitsTransferred` | Partículas entregadas al destino — equivale al valor que mostraba el KPI antiguo | `PLC_STATE.stats` |
+| `stats.scrapCount` | Partículas perdidas por tener la cinta de destino parada | `PLC_STATE.stats` |
+| `stats.batchesByDest` | Lotes por posición de destino (1/2/3) | `PLC_STATE.stats` |
+
+Un ciclo interrumpido por alarma o por retorno a Condiciones Iniciales **no** se contabiliza como lote.
+Las capturas o vídeos anteriores a este cambio muestran el valor de `unitsTransferred`, no el de lotes.
+
+### 9.3 Persistencia de métricas
+
+Los acumulados ya no se escriben en `localStorage` en cada ciclo del PLC (50 veces por segundo),
+sino mediante `flushMetrics()`: un temporizador de 5 s más los eventos de cierre de ciclo, alarma,
+bloqueo de seguridad y cierre de sesión. Claves usadas: `plcMetrics` (compatibilidad) y `plcStats` (nuevo).
+
+Ante un cierre abrupto de la pestaña pueden perderse hasta 5 s de acumulados.
+
+### 9.4 Configuración de negocio
+
+La tarifa eléctrica, el factor de emisión y la potencia nominal por motor dejan de estar
+*hardcoded* en la interfaz. Viven en `BUSINESS_CONFIG` (`js/plc-simulation.js`) y se persisten
+en `localStorage['businessConfig']`:
+
+```json
+{ "tariffUSDPerKWh": 0.15, "co2KgPerKWh": 0.4, "motorRatedKW": 1.5 }
+```
+
+El factor de CO₂ es un valor de referencia genérico, no una medida del proceso.
+
+### 9.5 Separación de funciones en los mandos
+
+Los roles **Admin** y **Gerente** no superan `checkPermission('BASIC_CONTROL')` y por diseño no
+operan la planta. Antes los botones aparecían deshabilitados sin explicación; ahora la consola de
+mando muestra el motivo y a qué rol hay que cambiar. Para operar el HMI hay que iniciar sesión
+como **Supervisor**, o como **Operador** con la capacidad *Control Manual* marcada en su creación.
+
+---
+
+## 10. Instrumentación del PLC (Fase 1)
+
+`PLC_STATE.stats` acumula la materia prima de todo el catálogo de métricas. Se actualiza
+desde `updateStats(dt)` — invocada **antes** que `updatePhysics()` y `updatePLCLogic()` y
+envuelta en `try/catch`, de modo que ni una salida temprana de la lógica de control le hace
+perder tiempo, ni un fallo suyo puede detener la planta.
+
+### 10.1 Qué acumula
+
+| Grupo | Campos | Métricas que habilita |
+|---|---|---|
+| Tiempo | `totalElapsedSeconds`, `stateTime`, `stateEntries` | Disponibilidad, tiempo por estado, MTTR |
+| Alarmas | `alarmCount` (por cinta), `firstAlarmAt`, `lastAlarmAt` | MTBF, alarmas por cinta, tiempo hasta el primer fallo |
+| Actuadores | `motorSeconds`, `motorKWh`, `motorCycles` (8 salidas) | Consumo por motor, horas de servicio, ciclos, desgaste |
+| Producción | `unitsTransferred`, `batchesByDest`, `scrapCount` | Reparto por destino, scrap, tasa de calidad |
+| Seguridad | `commandCounts`, `rejectedCommands`, `securityEvents`, `lockdownCount` | Aceptados vs. rechazados, eventos por tipo de ataque |
+| Proceso | `hopperCycles`, `totalDegreesRotated` | Ciclos de tolva, desgaste del reductor |
+| Sistema | `loop` (`ticks`, `avgDtMs`, `maxDtMs`, `jitterMs`) | FPS reales y deriva del ciclo |
+
+### 10.2 Dos invariantes que deben cumplirse siempre
+
+- **`Σ stateTime` = `totalElapsedSeconds`.** Todo instante se atribuye a exactamente un estado.
+- **`Σ motorKWh` = `powerConsumptionKWh`.** Ambos se derivan del mismo recorrido por los 8
+  actuadores, así que cuadran por construcción y no por coincidencia.
+
+Medidos tras un ciclo completo: desviación **0,000000 %** en ambos.
+
+### 10.3 El estado `SECURITY_LOCKDOWN`
+
+No pertenece a la máquina de estados del PLC. Mientras el firewall OT mantiene el bloqueo,
+`control.status` conserva el valor que tuviera al producirse la intrusión (por ejemplo `RUNNING`),
+pero la planta está parada. El estado que se contabiliza es el **efectivo**:
+
+```
+securityLockdown ? 'SECURITY_LOCKDOWN' : control.status
+```
+
+Sin esta distinción, el tiempo de bloqueo inflaría la disponibilidad.
+
+### 10.4 Eventos de dominio
+
+El PLC emite tres `CustomEvent` en `window` para que los consumidores no tengan que sondear:
+
+| Evento | `detail` | Cuándo |
+|---|---|---|
+| `plc-state-change` | `{ from, to, at }` | Cada transición de estado efectivo |
+| `plc-alarm` | `{ belt, message, at }` | Flanco de alarma (no se repite mientras siga activa) |
+| `plc-lockdown` | `{ reason, message, command, at }` | Cada rechazo del firewall OT |
+
+### 10.5 Persistencia y reinicio
+
+Los acumulados se guardan en `plcStats`; el total de planta sigue en `plcMetrics` por
+compatibilidad con la interfaz existente. La carga aplica un **merge defensivo**: toda clave
+ausente, no numérica o corrupta queda en su valor inicial, de modo que ampliar la estructura
+más adelante no rompe los datos guardados.
+
+> ⚠️ **`plcStats` y `plcMetrics` deben reiniciarse juntas.** Borrar una sin la otra descuadra
+> el balance de energía de forma permanente. `loop` y `sessionStartedAt` describen la sesión
+> en curso y nunca se restauran.
+
+---
+
 *Documentación técnica — Parcial 3 — Sistemas de Automatización Industrial.*
