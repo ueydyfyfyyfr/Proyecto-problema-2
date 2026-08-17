@@ -20,7 +20,7 @@ function saveLogs() {
 }
 
 // Agregar una entrada de auditoría
-// type: 'INFO' | 'WARNING' | 'SECURITY_ALERT' | 'CONFIG_CHANGE' | 'OPERATION'
+// type: 'INFO' | 'WARNING' | 'SECURITY_ALERT' | 'CONFIG_CHANGE' | 'OPERATION' | 'AI_INTERACTION' | 'AUTH_FAIL'
 export function logEvent(type, message, user = 'SYSTEM', details = null) {
   const logEntry = {
     id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
@@ -48,6 +48,17 @@ export function logEvent(type, message, user = 'SYSTEM', details = null) {
 export function getLogs() {
   loadLogs();
   return auditLogs;
+}
+
+export function getLogsSince(timestamp) {
+  loadLogs();
+  const ts = new Date(timestamp).getTime();
+  return auditLogs.filter(log => new Date(log.timestamp).getTime() >= ts);
+}
+
+export function getLogsByType(type) {
+  loadLogs();
+  return auditLogs.filter(log => log.type === type);
 }
 
 // Limpiar el registro de auditoría (solo accesible por Administrador / Ingeniero en simulación)

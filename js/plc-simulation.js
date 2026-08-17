@@ -53,7 +53,8 @@ export const PLC_STATE = {
     materialOnCinta0: [],     // Partículas de material
     materialOnDest: [],
     runTimeSeconds: 0,        // Contador de tiempo de uso acumulado
-    batchesProcessed: 0,      // Número de lotes de material procesados
+    batchesProcessed: 0,      // Número de lotes
+    unitsTransferred: 0,      // Partículas transferidas de material procesados
     powerConsumptionKWh: 0,   // Consumo estimado
   },
   
@@ -65,6 +66,24 @@ export const PLC_STATE = {
     speedSensorPulsePeriod: 100, // ms entre pulsos (10Hz)
   },
   
+
+  // Estadísticas e instrumentación (Fase 2)
+  stats: {
+    stateTime: { IDLE: 0, ROTATING: 0, RUNNING: 0, DISCHARGING_C0: 0, DISCHARGING_DEST: 0, ALARM: 0, EMERGENCY_LOCK: 0 },
+    alarmCount: { C0: 0, C1: 0, C2: 0, C3: 0 },
+    motorSeconds: { MC0: 0, MC1: 0, MC2: 0, MC3: 0, MGIzq: 0, MGDer: 0, MTolAb: 0, MTolCe: 0 },
+    motorKWh: { MC0: 0, MC1: 0, MC2: 0, MC3: 0, MGIzq: 0, MGDer: 0, MTolAb: 0, MTolCe: 0 },
+    motorCycles: { MC0: 0, MC1: 0, MC2: 0, MC3: 0, MGIzq: 0, MGDer: 0, MTolAb: 0, MTolCe: 0 },
+    batchesByDest: { 1: 0, 2: 0, 3: 0 },
+    scrapCount: 0,
+    commandCounts: {},
+    rejectedCommands: {},
+    securityEvents: { COMANDO_NO_FIRMADO: 0, INTEGRIDAD_COMPROMETIDA: 0, ATAQUE_REPLAY_DETECTADO: 0, TRAMA_EXPIRADA: 0, FORMATO_CORRUPTO: 0 },
+    totalElapsedSeconds: 0,
+    firstAlarmAt: null,
+    lastAlarmAt: null,
+    lockdownCount: 0
+  },
   // Estado interno del control secuencial del PLC (máquina de estados)
   control: {
     status: 'IDLE',          // 'IDLE', 'ROTATING', 'RUNNING', 'DISCHARGING_C0', 'DISCHARGING_DEST', 'ALARM', 'EMERGENCY_LOCK'
@@ -91,7 +110,7 @@ export const PLC_STATE = {
 var PLC_SHARED_SECRET = "PlcSuperSecretKeyOT2026!";
 
 // Registro de Nonces recibidos para prevenir ataques de Replay
-const receivedNonces = new Set();
+const receivedNonces = new Map();
 const maxNonceAgeMs = 60000; // Rechazar comandos con timestamps mayores a 60 segundos
 
 // Iniciar simulación física
@@ -117,6 +136,9 @@ export function initSimulation(onStateUpdate) {
       PLC_STATE.physical.runTimeSeconds = m.runTimeSeconds || 0;
       PLC_STATE.physical.batchesProcessed = m.batchesProcessed || 0;
       PLC_STATE.physical.powerConsumptionKWh = m.powerConsumptionKWh || 0;
+      PLC_STATE.physical.unitsTransferred = m.unitsTransferred || 0;
+      if (m.stats) PLC_STATE.stats = m.stats;
+
     } catch(e) {}
   }
 
@@ -190,6 +212,7 @@ function updatePhysics(dt) {
       m.x += 1.5 * dt; // velocidad de avance
     });
     
+    
     // Transferencia de Cinta 0 a la cinta de destino correspondiente al ángulo actual
     PLC_STATE.physical.materialOnCinta0 = PLC_STATE.physical.materialOnCinta0.filter(m => {
       if (m.x >= 1.0) { // Fin de Cinta 0
@@ -201,14 +224,16 @@ function updatePhysics(dt) {
             x: 0,
             y: 10 + Math.random() * 10
           });
-          PLC_STATE.physical.batchesProcessed++;
+          PLC_STATE.physical.unitsTransferred++;
+        } else {
+          PLC_STATE.stats.scrapCount++;
         }
         return false; // Remover de Cinta 0
       }
       return true;
     });
-  }
-  
+  } // <-- MISSING CLOSING BRACE
+
   // Mover material en las Cintas de Destino (1, 2, 3)
   PLC_STATE.physical.materialOnDest.forEach(m => {
     const motorActive = PLC_STATE.outputs[`MC${m.cinta}`];
@@ -235,12 +260,41 @@ function updatePhysics(dt) {
     const powerKW = activeMotorsCount * 1.5;
     PLC_STATE.physical.powerConsumptionKWh += (powerKW * dt) / 3600;
     
-    // Guardar métricas periódicamente
-    localStorage.setItem('plcMetrics', JSON.stringify({
-      runTimeSeconds: PLC_STATE.physical.runTimeSeconds,
-      batchesProcessed: PLC_STATE.physical.batchesProcessed,
-      powerConsumptionKWh: PLC_STATE.physical.powerConsumptionKWh
-    }));
+    // Estadísticas
+    if (!PLC_STATE.previousOutputs) PLC_STATE.previousOutputs = {};
+    ['MC0','MC1','MC2','MC3','MGIzq','MGDer','MTolAb','MTolCe'].forEach(motor => {
+      if (PLC_STATE.outputs[motor]) {
+        PLC_STATE.stats.motorSeconds[motor] += dt;
+        PLC_STATE.stats.motorKWh[motor] += (1.5 * dt) / 3600;
+      }
+      if (PLC_STATE.outputs[motor] && !PLC_STATE.previousOutputs[motor]) {
+        PLC_STATE.stats.motorCycles[motor]++;
+      }
+      PLC_STATE.previousOutputs[motor] = PLC_STATE.outputs[motor];
+    });
+
+    PLC_STATE.stats.totalElapsedSeconds += dt;
+    if (PLC_STATE.stats.stateTime[PLC_STATE.control.status] !== undefined) {
+      PLC_STATE.stats.stateTime[PLC_STATE.control.status] += dt;
+    }
+
+    if (!PLC_STATE.lastSaveTime || (Date.now() - PLC_STATE.lastSaveTime > 5000)) {
+      PLC_STATE.lastSaveTime = Date.now();
+      
+      // Purge nonces
+      const cutoff = Date.now() - maxNonceAgeMs;
+      for (const [n, ts] of receivedNonces.entries()) {
+        if (ts < cutoff) receivedNonces.delete(n);
+      }
+
+      localStorage.setItem('plcMetrics', JSON.stringify({
+        runTimeSeconds: PLC_STATE.physical.runTimeSeconds,
+        batchesProcessed: PLC_STATE.physical.batchesProcessed,
+        unitsTransferred: PLC_STATE.physical.unitsTransferred,
+        powerConsumptionKWh: PLC_STATE.physical.powerConsumptionKWh,
+        stats: PLC_STATE.stats
+      }));
+    }
   }
 }
 
@@ -376,7 +430,18 @@ function updatePLCLogic(dt) {
         PLC_STATE.outputs[`LConC${activeDest}`] = false;
         PLC_STATE.outputs[`LDesC${activeDest}`] = true;
         
+        
         PLC_STATE.control.status = 'IDLE';
+        PLC_STATE.physical.batchesProcessed++;
+        if (PLC_STATE.stats.batchesByDest[activeDest] !== undefined) {
+          PLC_STATE.stats.batchesByDest[activeDest]++;
+        }
+        
+        // Disparar evento de estado para el motor estadístico
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('plc-state-change', { detail: { status: 'IDLE' } }));
+        }
+
         logEvent('INFO', `Descarga de Cinta de Destino ${activeDest} completada. Proceso en REPOSO.`, 'PLC');
       }
       updateStatusLamps();
@@ -468,6 +533,13 @@ function stopAllMotors() {
 function triggerAlarm(beltKey, msg) {
   PLC_STATE.control.status = 'ALARM';
   PLC_STATE.control.alarms[beltKey] = true;
+  PLC_STATE.stats.alarmCount[beltKey]++;
+  if (!PLC_STATE.stats.firstAlarmAt) PLC_STATE.stats.firstAlarmAt = new Date().toISOString();
+  PLC_STATE.stats.lastAlarmAt = new Date().toISOString();
+  
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('plc-alarm', { detail: { beltKey, msg } }));
+  }
   
   // Detener la cinta fallida de inmediato
   if (beltKey === 'C0') {
@@ -548,7 +620,7 @@ export async function handleNetworkMessage(encryptedOrSignedMessageStr) {
     }
     
     // Registrar el Nonce como utilizado
-    receivedNonces.add(nonce);
+    receivedNonces.set(nonce, Date.now());
     
     // Ejecutar el comando aprobado por seguridad
     const result = executeCommand(packet.payload);
@@ -675,6 +747,14 @@ function executeCommand(payload) {
 function triggerSecurityLockdown(reason, detailMsg) {
   PLC_STATE.control.securityLockdown = true;
   PLC_STATE.control.securityLockReason = reason;
+  PLC_STATE.stats.lockdownCount++;
+  if (PLC_STATE.stats.securityEvents[reason] !== undefined) {
+    PLC_STATE.stats.securityEvents[reason]++;
+  }
+  
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('plc-lockdown', { detail: { reason, detailMsg } }));
+  }
   stopAllMotors();
   logEvent('SECURITY_ALERT', `ALERTA DE SEGURIDAD OT: ${detailMsg}`, 'PLC_FIREWALL', { reason, detailMsg });
 }

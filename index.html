@@ -2,639 +2,287 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard Ciberfísico HMI - Problema 2</title>
-  <link rel="stylesheet" href="styles.css">
-  <script>
-    window.addEventListener('error', function(event) {
-      const err = document.createElement('div');
-      err.style.position = 'fixed';
-      err.style.top = '0';
-      err.style.left = '0';
-      err.style.background = 'red';
-      err.style.color = 'white';
-      err.style.padding = '10px';
-      err.style.zIndex = '999999';
-      err.innerText = 'JS Error: ' + event.message + ' at ' + event.filename + ':' + event.lineno;
-      document.body.appendChild(err);
-    });
-  </script>
+  <title>SCADA HMI - Cockpit Industrial</title>
+  <link rel="stylesheet" href="styles.css?v=4.2">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
-  <!-- ==========================================
-       SECTION 1: LOGIN (RBAC ACCESO SEGURO)
-       ========================================== -->
-  <section id="login-section" class="login-container">
-    <div class="login-card">
+  <!-- ==================== PANTALLA DE LOGIN ==================== -->
+  <div id="login-section" class="login-overlay">
+    <div class="login-card cyberpunk-panel">
       <div class="login-header">
-        <div style="display: flex; justify-content: center; margin-bottom: 12px;">
-          <div class="navbar-brand">
-            <div class="logo-icon">OT</div>
-          </div>
-        </div>
-        <h2>Sistema de Control Industrial</h2>
-        <p>Dashboard Ciberfísico & Seguridad OT</p>
+        <h2>ACCESO RESTRINGIDO</h2>
+        <p>HMI CIBERFÍSICO OT</p>
       </div>
-      
       <form id="login-form">
         <div class="form-group">
-          <label class="form-label" for="login-username">Usuario</label>
-          <input class="form-input" type="text" id="login-username" placeholder="Ej: operador, ingeniero..." required>
+          <label>OPERADOR ID</label>
+          <input type="text" id="login-username" class="cyber-input" required autocomplete="off">
         </div>
         <div class="form-group">
-          <label class="form-label" for="login-password">Contraseña</label>
-          <input class="form-input" type="password" id="login-password" placeholder="••••••••" required>
+          <label>CREDENCIAL SECRETA</label>
+          <input type="password" id="login-password" class="cyber-input" required>
         </div>
-        
-        <button type="submit" class="btn btn-primary">Iniciar Sesión</button>
-        <div id="login-error" class="login-error"></div>
+        <button type="submit" class="btn-cyber block">VERIFICAR IDENTIDAD</button>
+        <div id="login-error" class="error-msg"></div>
       </form>
-
-      <div class="role-credentials-box">
-        <h4>Credenciales de Prueba (Simulación RBAC):</h4>
-        <ul>
-          <li>👑 <strong>Admin:</strong> <code>admin</code> / <code>manager123</code> (Super Usuario)</li>
-          <li>👤 <strong>Operador:</strong> <code>operador</code> / <code>operator123</code> (Control básico)</li>
-          <li>🛠️ <strong>Supervisor:</strong> <code>ingeniero</code> / <code>engineer123</code> (Config/Forzado/Logs)</li>
-        </ul>
+      <div class="login-footer">
+        <small>Seguridad de Red: PBKDF2-SHA256 Auth</small>
       </div>
     </div>
-  </section>
+  </div>
 
-  <!-- ==========================================
-       SECTION 2: DASHBOARD APP PRINCIPAL
-       ========================================== -->
-  <section id="app-section" class="dashboard-wrapper hidden">
-    <!-- Navbar Superior -->
-    <header class="navbar">
-      <div class="navbar-brand">
-        <div class="logo-icon">OT</div>
-        <h1>Planta Ciberfísica <span>| Celda de Distribución</span></h1>
+  <!-- ==================== APLICACIÓN HMI ==================== -->
+  <div id="app-section" class="cockpit-layout hidden">
+    
+    <!-- BARRA SUPERIOR (NAVBAR) -->
+    <header class="top-nav">
+      <div class="nav-left">
+        <div class="brand">
+          <span class="neon-text">SYS</span><span class="muted">/</span>OT-CORE
+        </div>
       </div>
       
-      <div class="navbar-user">
+      <div class="nav-tabs">
+        <button id="tab-header-dashboard" class="tab-btn tab-active">OPERACIÓN</button>
+        <button id="tab-header-analytics" class="tab-btn">ANALÍTICA & IA</button>
+        <button id="tab-header-security" class="tab-btn">CIBERSEGURIDAD</button>
+        <button id="tab-header-users" class="tab-btn">USUARIOS</button>
+        <button id="tab-header-engineer" class="tab-btn">AJUSTES</button>
+      </div>
+
+      <div class="nav-right">
         <div class="user-profile">
-          Bienvenido, <span id="user-welcome-name" class="name">Cargando...</span>
-          <span id="user-role-badge" class="role-badge">Operador</span>
+          <span id="user-role-badge" class="role-badge">Op</span>
+          <span id="user-welcome-name" class="user-name">Usuario</span>
         </div>
-        <button id="btn-logout" class="btn btn-secondary btn-sm">Cerrar Sesión</button>
+        <button id="btn-logout" class="btn-logout">SALIR</button>
       </div>
     </header>
 
-    <!-- Barra de Pestañas de Navegación -->
-    <nav class="tabs-bar">
-      <button id="tab-header-dashboard" class="tab-btn tab-active">HMI Principal</button>
-      <button id="tab-header-engineer" class="tab-btn">Portal de Ingeniería</button>
-      <button id="tab-header-manager" class="tab-btn">KPIs & Negocio</button>
-      <button id="tab-header-security" class="tab-btn">Ciberseguridad OT</button>
-      <button id="tab-header-users" class="tab-btn">👥 Gestión de Usuarios</button>
-    </nav>
-
-    <!-- Área de Contenido Principal -->
+    <!-- ÁREA PRINCIPAL -->
     <main class="main-content">
-      
-      <!-- PESTAÑA A: DASHBOARD HMI PRINCIPAL -->
-      <div id="tab-dashboard" class="tab-pane">
-        <div class="grid-hmi">
-          
-          <!-- Columna Izquierda: Consola de Operaciones Manuales -->
-          <div class="panel-card controls-layout">
-            <h3 class="panel-title">Mando Operación</h3>
-            
-            <button id="btn-marcha" class="btn-ctrl btn-marcha">▶ Marcha (PMarcha)</button>
-            <button id="btn-paro" class="btn-ctrl btn-paro">⏸ Paro (PParo)</button>
-            <button id="btn-selec" class="btn-ctrl btn-selec">🔄 Selec (PSelec)</button>
-            
-            <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 8px 0;">
-            
-            <button id="btn-emer" class="btn-ctrl btn-emer">🚨 EMERGENCIA</button>
-            <button id="btn-reset-ci" class="btn-ctrl btn-reset-ci">🔄 Reset CI</button>
-            
-            <div class="status-badge">
-              <h4>Estado PLC:</h4>
-              <div>Fase: <span id="state-display">IDLE</span></div>
-              <div>Cinta 0: <span id="cinta0-angle">0°</span></div>
-              <div>Tolva: <span id="hopper-percent">0%</span></div>
-              <div style="margin-top: 6px; font-weight: bold; color: var(--text-primary);">
-                Destino: <span id="active-pos-lbl" style="color: var(--accent-yellow);">Posición 1</span>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Columna Central: Representación Visual en Tiempo Real (HMI Animado) -->
-          <div class="canvas-wrapper">
-            <canvas id="plant-canvas" width="800" height="500"></canvas>
-          </div>
-          
-          <!-- Columna Derecha: Lámparas Indicadoras y Señales Físicas -->
-          <div class="panel-card led-matrix">
-            <h3 class="panel-title">Lámparas e Indicadores</h3>
-            
-            <!-- Luces de Selección de Posición -->
-            <div class="led-section">
-              <div class="led-section-title">Posición Cinta 0</div>
-              <div class="led-row">
-                <span class="led-label">Posición 1 (LS1)</span>
-                <div id="led-ls1" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Posición 2 (LS2)</span>
-                <div id="led-ls2" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Posición 3 (LS3)</span>
-                <div id="led-ls3" class="led-indicator led-off"></div>
-              </div>
-            </div>
-            
-            <!-- Luces de Conexión y Funcionamiento -->
-            <div class="led-section">
-              <div class="led-section-title">Estado de Marcha (LCon)</div>
-              <div class="led-row">
-                <span class="led-label">Cinta 0 (LConC0)</span>
-                <div id="led-lcon-c0" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 1 (LConC1)</span>
-                <div id="led-lcon-c1" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 2 (LConC2)</span>
-                <div id="led-lcon-c2" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 3 (LConC3)</span>
-                <div id="led-lcon-c3" class="led-indicator led-off"></div>
-              </div>
-            </div>
-            
-            <!-- Luces de Desconexión / Reposo -->
-            <div class="led-section">
-              <div class="led-section-title">Estado de Parada (LDes)</div>
-              <div class="led-row">
-                <span class="led-label">Cinta 0 (LDesC0)</span>
-                <div id="led-ldes-c0" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 1 (LDesC1)</span>
-                <div id="led-ldes-c1" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 2 (LDesC2)</span>
-                <div id="led-ldes-c2" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 3 (LDesC3)</span>
-                <div id="led-ldes-c3" class="led-indicator led-off"></div>
-              </div>
-            </div>
-            
-            <!-- Luces de Descarga -->
-            <div class="led-section">
-              <div class="led-section-title">Periodo de Descarga (LDescg)</div>
-              <div class="led-row">
-                <span class="led-label">Cinta 1 (LDescgC1)</span>
-                <div id="led-ldescg-c1" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 2 (LDescgC2)</span>
-                <div id="led-ldescg-c2" class="led-indicator led-off"></div>
-              </div>
-              <div class="led-row">
-                <span class="led-label">Cinta 3 (LDescgC3)</span>
-                <div id="led-ldescg-c3" class="led-indicator led-off"></div>
-              </div>
-            </div>
-          </div>
-          
-        </div>
-      </div>
-      
-      <!-- PESTAÑA B: PORTAL DE INGENIERÍA -->
-      <div id="tab-engineer" class="tab-pane hidden">
-        <div class="grid-engineer">
-          
-          <!-- Bloque de Temporizadores Configurables -->
-          <div class="panel-card">
-            <h3 class="panel-title">Ajuste Temporizadores del PLC</h3>
-            <form id="config-timers-form" class="config-form">
-              <div class="form-row">
-                <label for="cfg-hopper-delay">Retardo Apertura Tolva (desde M0)</label>
-                <div class="form-unit">
-                  <input class="form-input" type="number" id="cfg-hopper-delay" min="1" max="30" required>
-                </div>
-              </div>
-              
-              <div class="form-row">
-                <label for="cfg-cinta0-time">Tiempo Vaciado Cinta 0 (tras Paro)</label>
-                <div class="form-unit">
-                  <input class="form-input" type="number" id="cfg-cinta0-time" min="5" max="60" required>
-                </div>
-              </div>
-              
-              <div class="form-row">
-                <label for="cfg-dest-time">Tiempo Vaciado Cintas de Salida</label>
-                <div class="form-unit">
-                  <input class="form-input" type="number" id="cfg-dest-time" min="5" max="60" required>
-                </div>
-              </div>
-              
-              <button type="submit" class="btn btn-primary" style="margin-top: 10px;">Aplicar Parámetros con Firma HMAC</button>
-            </form>
-            
-            <!-- Inyección de fallas en sensores (Simulación de anomalías físicas) -->
-            <div style="margin-top: 30px;">
-              <h3 class="panel-title" style="border-left-color: var(--accent-orange);">Inyección Fallas de Velocidad</h3>
-              <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
-                Desactiva los sensores de velocidad para emular resbalamiento o fallo mecánico de las cintas.
-              </p>
-              
-              <div class="forcing-grid">
-                <div class="force-card">
-                  <div class="force-row">
-                    <span>Falla VigC0 (Cinta 0)</span>
-                    <label class="switch">
-                      <input type="checkbox" id="fail-vigc0">
-                      <span class="slider slider-danger"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="force-card">
-                  <div class="force-row">
-                    <span>Falla VigC1 (Cinta 1)</span>
-                    <label class="switch">
-                      <input type="checkbox" id="fail-vigc1">
-                      <span class="slider slider-danger"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="force-card">
-                  <div class="force-row">
-                    <span>Falla VigC2 (Cinta 2)</span>
-                    <label class="switch">
-                      <input type="checkbox" id="fail-vigc2">
-                      <span class="slider slider-danger"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="force-card">
-                  <div class="force-row">
-                    <span>Falla VigC3 (Cinta 3)</span>
-                    <label class="switch">
-                      <input type="checkbox" id="fail-vigc3">
-                      <span class="slider slider-danger"></span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Bloque de Forzado Manual de Actuadores (Válvulas / Motores) -->
-          <div class="panel-card">
-            <h3 class="panel-title" style="border-left-color: var(--accent-yellow);">Forzado Actuadores OT (Bypass Lógica)</h3>
-            <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
-              Permite forzar de forma manual las señales de salida del PLC para verificar el hardware.
-            </p>
-            
-            <div class="forcing-grid">
-              <div class="force-card">
-                <h4 style="font-size: 11px; margin-bottom: 8px; color: var(--text-secondary);">MOTORES CINTAS</h4>
-                <div class="force-row">
-                  <span>Motor C0 (MC0)</span>
-                  <label class="switch"><input type="checkbox" id="force-mc0"><span class="slider"></span></label>
-                </div>
-                <div class="force-row">
-                  <span>Motor C1 (MC1)</span>
-                  <label class="switch"><input type="checkbox" id="force-mc1"><span class="slider"></span></label>
-                </div>
-                <div class="force-row">
-                  <span>Motor C2 (MC2)</span>
-                  <label class="switch"><input type="checkbox" id="force-mc2"><span class="slider"></span></label>
-                </div>
-                <div class="force-row">
-                  <span>Motor C3 (MC3)</span>
-                  <label class="switch"><input type="checkbox" id="force-mc3"><span class="slider"></span></label>
-                </div>
-              </div>
-              
-              <div class="force-card">
-                <h4 style="font-size: 11px; margin-bottom: 8px; color: var(--text-secondary);">MOTORES AUXILIARES</h4>
-                <div class="force-row">
-                  <span>Plataforma Izq (MGIzq)</span>
-                  <label class="switch"><input type="checkbox" id="force-mgizq"><span class="slider"></span></label>
-                </div>
-                <div class="force-row">
-                  <span>Plataforma Der (MGDer)</span>
-                  <label class="switch"><input type="checkbox" id="force-mgder"><span class="slider"></span></label>
-                </div>
-                <div class="force-row">
-                  <span>Tolva Abrir (MTolAb)</span>
-                  <label class="switch"><input type="checkbox" id="force-mtolab"><span class="slider"></span></label>
-                </div>
-                <div class="force-row">
-                  <span>Tolva Cerrar (MTolCe)</span>
-                  <label class="switch"><input type="checkbox" id="force-mtolce"><span class="slider"></span></label>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+
+      <!-- ==================== PESTAÑA: OPERACIÓN (COCKPIT) ==================== -->
+      <div id="tab-dashboard" class="tab-pane tab-active">
         
-        <!-- Panel Completo Inferior: Registro de Auditoría Local -->
-        <div class="panel-card" style="margin-top: 20px;">
-          <h3 class="panel-title">Registro de Auditoría OT/IT</h3>
-          <div id="audit-log-container">
-            <!-- Renderizado dinámico desde app.js -->
+        <!-- LIENZO CENTRAL GIGANTE -->
+        <div class="canvas-wrapper">
+          <canvas id="plant-canvas" width="1600" height="750"></canvas>
+          
+          <!-- OVERLAYS SOBRE EL CANVAS -->
+          <div id="state-display" class="status-badge stopped overlay-status">IDLE</div>
+          
+          <div class="overlay-kpi oee-panel">
+            <div class="label">OEE GLOBAL</div>
+            <div class="value neon-green" id="kpi-oee">0.0%</div>
+          </div>
+          
+          <div class="overlay-kpi pos-panel">
+            <div class="label">PLATAFORMA</div>
+            <div class="value" id="active-pos-lbl">--</div>
+            <div style="font-size:10px; margin-top:2px;">ÁNGULO: <span id="cinta0-angle">0.0</span>°</div>
+          </div>
+        </div>
+
+        <!-- CONSOLA INFERIOR (BOTTOM DOCK) -->
+        <footer class="bottom-console">
+          
+          <div class="console-module controls">
+            <div class="module-title">PANEL DE CONTROL PLC</div>
+            <div class="btn-grid">
+              <button id="btn-marcha" class="btn-phys btn-marcha">▶ MARCHA</button>
+              <button id="btn-paro" class="btn-phys btn-paro">■ PARO</button>
+              <button id="btn-selec" class="btn-phys btn-selec">↻ SELECCIÓN</button>
+              <button id="btn-emer" class="btn-phys btn-emer">⚠ EMERGENCIA</button>
+              <button id="btn-reset-ci" class="btn-phys btn-reset">↺ RESET</button>
+            </div>
+          </div>
+
+          <div class="console-module indicators">
+            <div class="module-title">ESTADOS DE CAMPO</div>
+            <div class="led-grid">
+              <div class="led-item"><div id="led-ls1" class="status-led led-off"></div> LS1</div>
+              <div class="led-item"><div id="led-ls2" class="status-led led-off"></div> LS2</div>
+              <div class="led-item"><div id="led-ls3" class="status-led led-off"></div> LS3</div>
+              <div class="led-item"><div id="led-lcon-c0" class="status-led led-off"></div> CON_C0</div>
+              <div class="led-item"><div id="led-lcon-c1" class="status-led led-off"></div> CON_CX</div>
+              <div class="led-item"><div id="led-ldes-c0" class="status-led led-off"></div> DES_C0</div>
+            </div>
+          </div>
+
+          <div class="console-module kpis">
+            <div class="module-title">TELEMETRÍA EN VIVO</div>
+            <div class="telemetry-grid">
+              <div class="tel-item">
+                <span class="tel-label">TOLVA</span>
+                <span class="tel-value" id="hopper-percent">0.0%</span>
+              </div>
+              <div class="tel-item">
+                <span class="tel-label">DISPONIBILIDAD</span>
+                <span class="tel-value" id="kpi-avail">0.0%</span>
+              </div>
+              <div class="tel-item">
+                <span class="tel-label">RENDIMIENTO</span>
+                <span class="tel-value" id="kpi-perf">0.0%</span>
+              </div>
+              <div class="tel-item">
+                <span class="tel-label">MTBF</span>
+                <span class="tel-value" id="kpi-mtbf">0s</span>
+              </div>
+            </div>
+          </div>
+
+        </footer>
+      </div>
+
+      <!-- ==================== PESTAÑA: ANALÍTICA & IA ==================== -->
+      <div id="tab-analytics" class="tab-pane hidden">
+        <div class="panel-layout">
+          <div class="cyber-panel">
+            <div class="panel-header">EFICIENCIA ENERGÉTICA</div>
+            <div class="chart-wrapper"><canvas id="chart-energy"></canvas></div>
+          </div>
+          <div class="cyber-panel">
+            <div class="panel-header">PRODUCCIÓN POR DESTINO</div>
+            <div class="chart-wrapper"><canvas id="chart-destinations"></canvas></div>
+          </div>
+          <div class="cyber-panel full-width">
+            <div class="panel-header">REGISTRO DE MANTENIMIENTO</div>
+            <div class="chart-wrapper"><canvas id="chart-maintenance"></canvas></div>
           </div>
         </div>
       </div>
 
-      <!-- PESTAÑA E: GESTIÓN DE USUARIOS (ADMINISTRADOR + VISUALIZACIÓN) -->
-      <div id="tab-users" class="tab-pane hidden">
-
-        <!-- Info PBKDF2 Banner -->
-        <div class="pbkdf2-info-banner">
-          <div class="pbkdf2-icon">🔐</div>
-          <div>
-            <strong>Seguridad de Contraseñas: PBKDF2-SHA256 con Salt Individual</strong>
-            <p>Cada contraseña se almacena como una derivación criptográfica con <strong>100.000 iteraciones</strong> y un <strong>salt aleatorio de 128 bits único por usuario</strong>. Las contraseñas nunca existen en texto plano. Puedes exportar la base de usuarios como <code>usuarios.json</code> e importarla en cualquier instancia del sistema.</p>
+      <!-- ==================== PESTAÑA: CIBERSEGURIDAD ==================== -->
+      <div id="tab-security" class="tab-pane hidden">
+        <div class="panel-layout">
+          <div class="cyber-panel full-width">
+            <div class="panel-header">
+              <span>FIREWALL OT & PREVENCIÓN DE INTRUSIONES</span>
+              <button id="btn-sec-reset" class="btn-phys btn-reset" style="padding: 2px 10px; font-size: 12px;">Desbloquear Sistema</button>
+            </div>
+            <div class="table-scroll">
+              <table class="cyber-table">
+                <thead><tr><th>TIEMPO</th><th>DIRECCIÓN</th><th>TRAMA / CARGA ÚTIL</th></tr></thead>
+                <tbody id="network-traffic-logs"></tbody>
+              </table>
+            </div>
+          </div>
+          
+          <div class="cyber-panel">
+            <div class="panel-header">INCIDENTES REGISTRADOS</div>
+            <div class="chart-wrapper"><canvas id="chart-alarms"></canvas></div>
+          </div>
+          
+          <div class="cyber-panel">
+            <div class="panel-header">SIMULADOR DE ATAQUES</div>
+            <div class="attack-controls">
+              <button id="btn-attack-replay" class="btn-cyber btn-danger block">Lanzar Replay Attack</button>
+              <button id="btn-attack-tamper" class="btn-cyber btn-danger block mt-2">Lanzar Tampering (Firma Falsa)</button>
+              <div class="mt-3">
+                <small class="muted">Estos botones simulan inyecciones de red hacia el controlador PLC para probar la verificación de HMAC y Nonce temporal.</small>
+              </div>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div class="users-tab-grid">
-
-          <!-- ────────────────────────────────────────────────
-               PANEL IZQUIERDO: FORMULARIO DE CREACIÓN
-               ──────────────────────────────────────────────── -->
-          <div class="panel-card">
-            <h3 class="panel-title" style="border-left-color: var(--accent-green);">➕ Crear Nuevo Usuario</h3>
-
-            <form id="inline-register-form" class="config-form">
+      <!-- ==================== PESTAÑA: USUARIOS ==================== -->
+      <div id="tab-users" class="tab-pane hidden">
+        <div class="panel-layout">
+          <div class="cyber-panel" style="flex: 1 1 300px;">
+            <div class="panel-header">CREAR NUEVO OPERARIO</div>
+            <form id="create-user-form" class="mt-3">
               <div class="form-group">
-                <label class="form-label" for="ireg-fullname">Nombre Completo</label>
-                <input class="form-input" type="text" id="ireg-fullname" placeholder="Ej: María García" autocomplete="off" required>
+                <label>ID USUARIO</label>
+                <input type="text" id="ireg-user" class="cyber-input" required>
               </div>
-
               <div class="form-group">
-                <label class="form-label" for="ireg-username">Nombre de Usuario</label>
-                <input class="form-input" type="text" id="ireg-username"
-                       placeholder="Ej: mgarcia (letras, números, _)" autocomplete="off"
-                       autocapitalize="off" spellcheck="false" required>
-                <div class="field-hint">Solo letras minúsculas, números y guión bajo (_). Mín. 3 caracteres.</div>
+                <label>NOMBRE COMPLETO</label>
+                <input type="text" id="ireg-name" class="cyber-input" required>
               </div>
-
               <div class="form-group">
-                <label class="form-label" for="ireg-role">Rol del Sistema</label>
-                <select class="form-input" id="ireg-role" required>
-                  <option value="">-- Seleccionar Rol --</option>
-                  <option value="Admin">👑 Admin - Super Usuario</option>
-                  <option value="Gerente">📊 Gerente - Nivel Más Alto (Métricas y Finanzas)</option>
-                  <option value="Supervisor">🛠️ Supervisor - Nivel Medio (Configuración)</option>
-                  <option value="Operador">👤 Operador - Planta (Checklist dinámico)</option>
+                <label>NIVEL DE ACCESO</label>
+                <select id="ireg-role" class="cyber-input">
+                  <option value="Admin">Admin</option>
+                  <option value="Gerente">Gerente</option>
+                  <option value="Supervisor">Supervisor</option>
+                  <option value="Operador" selected>Operador</option>
                 </select>
               </div>
-
-              <div id="operador-capabilities-box" style="display: none; background: rgba(0,0,0,0.1); border: 1px solid var(--border-color); padding: 12px; margin-bottom: 15px; border-radius: 4px;">
-                <label class="form-label">Permisos de Operador (Checklist)</label>
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                  <label><input type="checkbox" id="cap-read-only" checked disabled> Solo Ver (Visualización básica)</label>
-                  <label><input type="checkbox" id="cap-basic-control"> Control Básico (Encender/Apagar manual)</label>
-                  <label><input type="checkbox" id="cap-change-setpoints"> Cambiar Setpoints (Ajuste de tiempos)</label>
-                </div>
-              </div>
-
               <div class="form-group">
-                <label class="form-label" for="ireg-password">Contraseña</label>
-                <div class="pass-field-wrapper">
-                  <input class="form-input" type="password" id="ireg-password"
-                         placeholder="Mínimo 6 caracteres" autocomplete="new-password" required>
-                  <button type="button" class="pass-eye-btn" id="ireg-toggle-pass" title="Mostrar/Ocultar">👁</button>
-                </div>
-                <!-- Medidor de fortaleza -->
-                <div class="strength-bar-outer"><div class="strength-bar-fill" id="ireg-strength-fill"></div></div>
-                <div class="strength-label" id="ireg-strength-label">Ingresa una contraseña</div>
+                <label>CONTRASEÑA (Mín. 6)</label>
+                <input type="password" id="ireg-pass" class="cyber-input" required>
               </div>
-
-              <div class="form-group">
-                <label class="form-label" for="ireg-password2">Confirmar Contraseña</label>
-                <div class="pass-field-wrapper">
-                  <input class="form-input" type="password" id="ireg-password2"
-                         placeholder="Repite la contraseña" autocomplete="new-password" required>
-                </div>
-                <div class="field-hint" id="ireg-match-hint"></div>
-              </div>
-
-              <div id="inline-register-error"  class="login-error" style="margin-bottom: 8px;"></div>
-              <div id="inline-register-success" style="color: var(--accent-green); font-size: 13px; margin-bottom: 8px;"></div>
-
-              <button type="submit" id="btn-ireg-submit" class="btn btn-primary">
-                🔐 Crear Usuario (PBKDF2-SHA256)
-              </button>
+              <button type="submit" class="btn-cyber block">REGISTRAR USUARIO</button>
             </form>
-
-            <!-- Import / Export JSON -->
-            <div class="json-io-section">
-              <div class="json-io-title">Importar / Exportar usuarios.json</div>
-
-              <div class="json-io-row">
-                <!-- Import -->
-                <label class="json-io-btn" for="ireg-import-file" title="Cargar usuarios.json">
-                  <input type="file" id="ireg-import-file" accept=".json" style="display:none;">
-                  📥 Importar JSON
-                </label>
-                <!-- Export -->
-                <button class="json-io-btn" id="btn-export-json" title="Descargar usuarios.json">
-                  📤 Exportar JSON
-                </button>
-                <!-- Copy -->
-                <button class="json-io-btn" id="btn-copy-json-users" title="Copiar JSON al portapapeles">
-                  📋 Copiar
-                </button>
-              </div>
-
-              <div id="json-io-msg" style="font-size: 12px; margin-top: 8px;"></div>
-
-              <!-- Vista previa del JSON -->
-              <div class="json-preview-box" id="json-preview-box" style="display:none;">
-                <div class="json-preview-header">
-                  <span>Vista previa — usuarios.json</span>
-                  <button class="json-preview-close" id="btn-json-preview-close">✕</button>
-                </div>
-                <pre class="json-preview-content" id="json-preview-content"></pre>
-              </div>
-            </div>
-          </div>
-
-          <!-- ────────────────────────────────────────────────
-               PANEL DERECHO: TABLA DE USUARIOS DEL SISTEMA
-               ──────────────────────────────────────────────── -->
-          <div class="panel-card">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-              <h3 class="panel-title" style="margin-bottom: 0;">📋 Usuarios del Sistema</h3>
-              <button class="btn btn-secondary btn-sm" id="btn-refresh-users">↻ Actualizar</button>
-            </div>
-            <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px;">
-              🔒 = Usuario del sistema (no eliminable) &nbsp;|&nbsp; 👤 = Usuario dinámico
-            </p>
-            <div id="users-table-container">
-              <!-- Renderizado dinámico desde app.js -->
-            </div>
-          </div>
-
-        </div>
-      </div>
-      
-      <!-- PESTAÑA C: KPIs & NEGOCIO (GERENTE DE PRODUCCIÓN) -->
-      <div id="tab-manager" class="tab-pane hidden">
-        <div class="metrics-grid">
-          
-          <div class="kpi-card">
-            <span class="kpi-title">Tiempo de Operación</span>
-            <span class="kpi-value text-blue" id="kpi-runtime">00:00:00</span>
-            <span class="kpi-sub">Segundos en régimen activo</span>
           </div>
           
-          <div class="kpi-card">
-            <span class="kpi-title">Lotes Procesados</span>
-            <span class="kpi-value" id="kpi-batches">0</span>
-            <span class="kpi-sub">Total de descarga a cintas de destino</span>
-          </div>
-          
-          <div class="kpi-card">
-            <span class="kpi-title">Consumo de Energía</span>
-            <span class="kpi-value text-green" id="kpi-power">0.00 kWh</span>
-            <span class="kpi-sub">Basado en motores encendidos (1.5kW c/u)</span>
-          </div>
-          
-          <div class="kpi-card">
-            <span class="kpi-title">Costo Financiero Estimado</span>
-            <span class="kpi-value" id="kpi-cost">$0.00 USD</span>
-            <span class="kpi-sub">Tarifa fija industrial ($0.15 / kWh)</span>
-          </div>
-          
-        </div>
-        
-        <div class="manager-charts-panel">
-          <div class="panel-card">
-            <h3 class="panel-title">Distribución de Carga Eléctrica por Componente</h3>
-            <div class="sim-chart">
-              <div class="chart-bar-container">
-                <div class="chart-bar" style="height: 60%;"></div>
-                <span class="chart-label">Cinta 0</span>
-              </div>
-              <div class="chart-bar-container">
-                <div class="chart-bar bar-green" style="height: 25%;"></div>
-                <span class="chart-label">Cinta 1</span>
-              </div>
-              <div class="chart-bar-container">
-                <div class="chart-bar bar-green" style="height: 15%;"></div>
-                <span class="chart-label">Cinta 2</span>
-              </div>
-              <div class="chart-bar-container">
-                <div class="chart-bar bar-green" style="height: 35%;"></div>
-                <span class="chart-label">Cinta 3</span>
-              </div>
-              <div class="chart-bar-container">
-                <div class="chart-bar" style="height: 8%;"></div>
-                <span class="chart-label">Tolva / MG</span>
-              </div>
-            </div>
-            <p style="font-size: 12px; color: var(--text-secondary); text-align: center;">
-              Consumo de energía proporcional simulado en tiempo real basado en la carga del sistema.
-            </p>
-          </div>
-          
-          <div class="panel-card">
-            <h3 class="panel-title">Mantenimiento Preventivo</h3>
-            <div style="font-size: 13px; display: flex; flex-direction: column; gap: 10px;">
-              <div>
-                <strong>Desgaste Cinta 0:</strong>
-                <div style="width: 100%; height: 6px; background-color: var(--bg-tertiary); border-radius: 3px; margin-top: 4px; overflow: hidden;">
-                  <div style="width: 18%; height: 100%; background-color: var(--accent-green);"></div>
-                </div>
-              </div>
-              <div>
-                <strong>Horas para lubricación de MG:</strong>
-                <div style="color: var(--accent-green); font-size: 18px; font-weight: bold; font-family: monospace;">1,432 hrs</div>
-              </div>
-              <div>
-                <strong>Próxima revisión de sensores:</strong>
-                <div style="color: var(--text-primary); font-weight: 500;">28 de Septiembre 2026</div>
-              </div>
-            </div>
+          <div class="cyber-panel" style="flex: 2 1 600px;">
+            <div class="panel-header">BASE DE DATOS DE USUARIOS</div>
+            <div id="users-table-container"></div>
           </div>
         </div>
       </div>
-      
-      <!-- PESTAÑA D: CIBERSEGURIDAD OT (VULNERABILITY SANDBOX) -->
-      <div id="tab-security" class="tab-pane hidden">
-        
-        <!-- Banner de Reset de Bloqueo OT -->
-        <div class="security-reset-banner">
-          <p>
-            <strong>🛡️ FIREWALL DE SEGURIDAD OT:</strong> Si el sistema de protección detecta una intrusión, detendrá el proceso y bloqueará la comunicación. Presiona el botón para restablecer las operaciones tras corregir el incidente.
-          </p>
-          <button class="btn btn-danger btn-sm" id="btn-sec-reset">Restablecer Seguridad</button>
-        </div>
-        
-        <div class="grid-security">
+
+      <!-- ==================== PESTAÑA: AJUSTES ==================== -->
+      <div id="tab-engineer" class="tab-pane hidden">
+        <div class="panel-layout">
           
-          <!-- Sandbox del Atacante (Simulador de Hackers) -->
-          <div class="panel-card hacker-panel">
-            <h3 class="panel-title">Consola del Atacante (Pruebas de Penetración)</h3>
-            <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;">
-              Interactúa con los controles inferiores para simular un ciberataque industrial directo a la red del PLC y observar la capacidad de defensa y resiliencia.
-            </p>
-            
-            <div class="attack-buttons">
-              
-              <!-- Ataque 1: Comando sin Firma -->
-              <div class="attack-card">
-                <h4>Ataque #1: Comando No Firmado (Unsigned Injection)</h4>
-                <p>Intenta inyectar comandos directamente al puerto del PLC sin incluir firmas de integridad.</p>
-                <button class="btn btn-danger btn-sm" id="btn-attack-unsigned">Inyectar Comando sin Firma</button>
+          <!-- Ajustes de PLC -->
+          <div class="cyber-panel">
+            <div class="panel-header">PARÁMETROS PLC (FIRMADOS)</div>
+            <form id="config-timers-form" class="mt-3">
+              <div class="form-group">
+                <label>TOLVA: APERTURA (ms)</label>
+                <input type="number" id="cfg-hopper-delay" class="cyber-input" required>
               </div>
-              
-              <!-- Ataque 2: Manipulación de Datos (Tampering) -->
-              <div class="attack-card">
-                <h4>Ataque #2: Manipulación de Variables (Tampering)</h4>
-                <p>Envía un comando firmado pero altera su contenido en tránsito (ej: cambia STOP a START).</p>
-                <button class="btn btn-danger btn-sm" id="btn-attack-tampered">Inyectar Comando Manipulado</button>
+              <div class="form-group">
+                <label>CINTA 0: VACIADO (ms)</label>
+                <input type="number" id="cfg-cinta0-time" class="cyber-input" required>
               </div>
-              
-              <!-- Ataque 3: Ataque de Reenvío (Replay Attack) -->
-              <div class="attack-card">
-                <h4>Ataque #3: Reenvío de Tramas (Replay Attack)</h4>
-                <p>Captura una trama legítima antigua (con HMAC correcto) y reenvíala para forzar al motor.</p>
-                <button class="btn btn-danger btn-sm" id="btn-attack-replay">Reenviar Último Comando Válido</button>
+              <div class="form-group">
+                <label>DESTINO: VACIADO (ms)</label>
+                <input type="number" id="cfg-dest-time" class="cyber-input" required>
               </div>
-              
-            </div>
+              <button type="submit" class="btn-cyber block">APLICAR CAMBIOS</button>
+            </form>
           </div>
-          
-          <!-- Analizador de Tráfico de Red (Wireshark Emulado) -->
-          <div class="panel-card">
-            <h3 class="panel-title">Analizador de Tráfico de Red OT (Emulación)</h3>
-            <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
-              Visualiza en tiempo real los bytes transmitidos a través del bus de comunicación HMI-PLC.
-            </p>
-            
-            <div class="table-scroll" style="height: 380px;">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th style="width: 100px;">Hora</th>
-                    <th style="width: 120px;">Dirección</th>
-                    <th>Mensaje / Estatus del Protocolo</th>
-                  </tr>
-                </thead>
-                <tbody id="network-traffic-logs">
-                  <tr>
-                    <td colspan="3" class="text-center text-muted" style="padding: 20px;">Esperando comandos de red...</td>
-                  </tr>
-                </tbody>
+
+          <!-- Ajustes de IA (n8n) -->
+          <div class="cyber-panel">
+            <div class="panel-header">CONFIGURACIÓN n8n IA</div>
+            <form id="config-n8n-form" class="mt-3">
+              <div class="form-group">
+                <label>WEBHOOK URL</label>
+                <input type="text" id="cfg-n8n-url" class="cyber-input" value="http://localhost:5678/webhook/hmi-ask" required>
+              </div>
+              <div class="form-group">
+                <label>TIPO DE AUTENTICACIÓN</label>
+                <select id="cfg-n8n-auth-type" class="cyber-input">
+                  <option value="none">Sin Autenticación</option>
+                  <option value="basic">Basic Auth</option>
+                  <option value="header">Header (API Key)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>CREDENTIALS (User:Pass / Key)</label>
+                <input type="password" id="cfg-n8n-cred" class="cyber-input" placeholder="ej: admin:1234 o my-secret-token">
+              </div>
+              <button type="submit" class="btn-cyber block">GUARDAR CONFIGURACIÓN</button>
+            </form>
+          </div>
+
+          <!-- Auditoría -->
+          <div class="cyber-panel full-width">
+            <div class="panel-header">LOG DE AUDITORÍA (INMUTABLE)</div>
+            <div class="table-scroll">
+              <table class="cyber-table">
+                <thead><tr><th>TIEMPO</th><th>USUARIO</th><th>ACCIÓN</th><th>DETALLE</th></tr></thead>
+                <tbody id="audit-logs-tbody"></tbody>
               </table>
             </div>
           </div>
@@ -643,9 +291,230 @@
       </div>
 
     </main>
-  </section>
+  </div>
 
-  <!-- Script principal de la aplicación (bundle auto-contenido compatible con modo file:// y servidor HTTP) -->
-  <script src="bundle.js"></script>
+  <!-- ==================== WIDGET CHAT IA ==================== -->
+  <button id="btn-open-chat" class="chat-fab hidden">
+    <div id="chat-status-led" class="status-led led-orange" style="position:absolute; top:-2px; right:-2px;"></div>
+    <span>IA</span>
+  </button>
+  
+  <div id="ai-chat-widget" class="chat-widget hidden cyberpunk-panel">
+    <div class="chat-header">
+      AGENTE OT-AI
+      <button id="btn-toggle-chat" class="btn-icon">✖</button>
+    </div>
+    <div class="chat-body" id="chat-messages">
+      <div class="msg bot">Sistema Inicializado. ¿En qué te ayudo?</div>
+    </div>
+    
+    <div class="chat-quick-replies" id="chat-quick-replies">
+      <button class="btn-quick-reply">¿Cuál es el OEE actual?</button>
+      <button class="btn-quick-reply">¿Hay alarmas activas?</button>
+      <button class="btn-quick-reply">Resumen de energía</button>
+    </div>
+    <div class="chat-footer">
+
+              <div class="tel-item">
+                <span class="tel-label">DISPONIBILIDAD</span>
+                <span class="tel-value" id="kpi-avail">0.0%</span>
+              </div>
+              <div class="tel-item">
+                <span class="tel-label">RENDIMIENTO</span>
+                <span class="tel-value" id="kpi-perf">0.0%</span>
+              </div>
+              <div class="tel-item">
+                <span class="tel-label">MTBF</span>
+                <span class="tel-value" id="kpi-mtbf">0s</span>
+              </div>
+            </div>
+          </div>
+
+        </footer>
+      </div>
+
+      <!-- ==================== PESTAÑA: ANALÍTICA & IA ==================== -->
+      <div id="tab-analytics" class="tab-pane hidden">
+        <div class="panel-layout">
+          <div class="cyber-panel">
+            <div class="panel-header">EFICIENCIA ENERGÉTICA</div>
+            <div class="chart-wrapper"><div id="chart-energy" style="width:100%; height:100%;"></div></div>
+          </div>
+          <div class="cyber-panel">
+            <div class="panel-header">PRODUCCIÓN POR DESTINO</div>
+            <div class="chart-wrapper"><div id="chart-destinations" style="width:100%; height:100%;"></div></div>
+          </div>
+          <div class="cyber-panel full-width">
+            <div class="panel-header">REGISTRO DE MANTENIMIENTO</div>
+            <div class="chart-wrapper"><div id="chart-maintenance" style="width:100%; height:100%;"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== PESTAÑA: CIBERSEGURIDAD ==================== -->
+      <div id="tab-security" class="tab-pane hidden">
+        <div class="panel-layout">
+          <div class="cyber-panel full-width">
+            <div class="panel-header">
+              <span>FIREWALL OT & PREVENCIÓN DE INTRUSIONES</span>
+              <button id="btn-sec-reset" class="btn-phys btn-reset" style="padding: 2px 10px; font-size: 12px;">Desbloquear Sistema</button>
+            </div>
+            <div class="table-scroll">
+              <table class="cyber-table">
+                <thead><tr><th>TIEMPO</th><th>DIRECCIÓN</th><th>TRAMA / CARGA ÚTIL</th></tr></thead>
+                <tbody id="network-traffic-logs"></tbody>
+              </table>
+            </div>
+          </div>
+          
+          <div class="cyber-panel">
+            <div class="panel-header">INCIDENTES REGISTRADOS</div>
+            <div class="chart-wrapper"><div id="chart-alarms" style="width:100%; height:100%;"></div></div>
+          </div>
+          
+          <div class="cyber-panel">
+            <div class="panel-header">SIMULADOR DE ATAQUES</div>
+            <div class="attack-controls">
+              <button id="btn-attack-replay" class="btn-cyber btn-danger block">Lanzar Replay Attack</button>
+              <button id="btn-attack-tamper" class="btn-cyber btn-danger block mt-2">Lanzar Tampering (Firma Falsa)</button>
+              <div class="mt-3">
+                <small class="muted">Estos botones simulan inyecciones de red hacia el controlador PLC para probar la verificación de HMAC y Nonce temporal.</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== PESTAÑA: USUARIOS ==================== -->
+      <div id="tab-users" class="tab-pane hidden">
+        <div class="panel-layout">
+          <div class="cyber-panel" style="flex: 1 1 300px;">
+            <div class="panel-header">CREAR NUEVO OPERARIO</div>
+            <form id="create-user-form" class="mt-3">
+              <div class="form-group">
+                <label>ID USUARIO</label>
+                <input type="text" id="ireg-user" class="cyber-input" required>
+              </div>
+              <div class="form-group">
+                <label>NOMBRE COMPLETO</label>
+                <input type="text" id="ireg-name" class="cyber-input" required>
+              </div>
+              <div class="form-group">
+                <label>NIVEL DE ACCESO</label>
+                <select id="ireg-role" class="cyber-input">
+                  <option value="Admin">Admin</option>
+                  <option value="Gerente">Gerente</option>
+                  <option value="Supervisor">Supervisor</option>
+                  <option value="Operador" selected>Operador</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>CONTRASEÑA (Mín. 6)</label>
+                <input type="password" id="ireg-pass" class="cyber-input" required>
+              </div>
+              <button type="submit" class="btn-cyber block">REGISTRAR USUARIO</button>
+            </form>
+          </div>
+          
+          <div class="cyber-panel" style="flex: 2 1 600px;">
+            <div class="panel-header">BASE DE DATOS DE USUARIOS</div>
+            <div id="users-table-container"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== PESTAÑA: AJUSTES ==================== -->
+      <div id="tab-engineer" class="tab-pane hidden">
+        <div class="panel-layout">
+          
+          <!-- Ajustes de PLC -->
+          <div class="cyber-panel">
+            <div class="panel-header">PARÁMETROS PLC (FIRMADOS)</div>
+            <form id="config-timers-form" class="mt-3">
+              <div class="form-group">
+                <label>TOLVA: APERTURA (ms)</label>
+                <input type="number" id="cfg-hopper-delay" class="cyber-input" required>
+              </div>
+              <div class="form-group">
+                <label>CINTA 0: VACIADO (ms)</label>
+                <input type="number" id="cfg-cinta0-time" class="cyber-input" required>
+              </div>
+              <div class="form-group">
+                <label>DESTINO: VACIADO (ms)</label>
+                <input type="number" id="cfg-dest-time" class="cyber-input" required>
+              </div>
+              <button type="submit" class="btn-cyber block">APLICAR CAMBIOS</button>
+            </form>
+          </div>
+
+          <!-- Ajustes de IA (n8n) -->
+          <div class="cyber-panel">
+            <div class="panel-header">CONFIGURACIÓN n8n IA</div>
+            <form id="config-n8n-form" class="mt-3">
+              <div class="form-group">
+                <label>WEBHOOK URL</label>
+                <input type="text" id="cfg-n8n-url" class="cyber-input" value="http://localhost:5678/webhook/hmi-ask" required>
+              </div>
+              <div class="form-group">
+                <label>TIPO DE AUTENTICACIÓN</label>
+                <select id="cfg-n8n-auth-type" class="cyber-input">
+                  <option value="none">Sin Autenticación</option>
+                  <option value="basic">Basic Auth</option>
+                  <option value="header">Header (API Key)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>CREDENTIALS (User:Pass / Key)</label>
+                <input type="password" id="cfg-n8n-cred" class="cyber-input" placeholder="ej: admin:1234 o my-secret-token">
+              </div>
+              <button type="submit" class="btn-cyber block">GUARDAR CONFIGURACIÓN</button>
+            </form>
+          </div>
+
+          <!-- Auditoría -->
+          <div class="cyber-panel full-width">
+            <div class="panel-header">LOG DE AUDITORÍA (INMUTABLE)</div>
+            <div class="table-scroll">
+              <table class="cyber-table">
+                <thead><tr><th>TIEMPO</th><th>USUARIO</th><th>ACCIÓN</th><th>DETALLE</th></tr></thead>
+                <tbody id="audit-logs-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ==================== WIDGET CHAT IA ==================== -->
+  <button id="btn-open-chat" class="chat-fab hidden">
+    <div id="chat-status-led" class="status-led led-orange" style="position:absolute; top:-2px; right:-2px;"></div>
+    <span>IA</span>
+  </button>
+  
+  <div id="ai-chat-widget" class="chat-widget hidden cyberpunk-panel">
+    <div class="chat-header">
+      AGENTE OT-AI
+      <button id="btn-toggle-chat" class="btn-icon">✖</button>
+    </div>
+    <div class="chat-body" id="chat-messages">
+      <div class="msg bot">Sistema Inicializado. ¿En qué te ayudo?</div>
+    </div>
+    
+    <div class="chat-quick-replies" id="chat-quick-replies">
+      <button class="btn-quick-reply">¿Cuál es el OEE actual?</button>
+      <button class="btn-quick-reply">¿Hay alarmas activas?</button>
+      <button class="btn-quick-reply">Resumen de energía</button>
+    </div>
+    <div class="chat-footer">
+
+      <input type="text" id="chat-input" class="cyber-input" placeholder="Comando de texto...">
+      <button id="btn-send-chat" class="btn-cyber">»</button>
+    </div>
+  </div>
+
+  <script src="bundle.js?v=4.2"></script>
 </body>
 </html>

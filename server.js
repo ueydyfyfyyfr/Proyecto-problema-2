@@ -45,7 +45,13 @@ const server = http.createServer((req, res) => {
         res.end(`<h1>500 Error Interno</h1><p>${err.code}</p>`);
       }
     } else {
-      res.writeHead(200, { 'Content-Type': contentType });
+      res.writeHead(200, { 
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Surrogate-Control': 'no-store'
+      });
       res.end(content);
     }
   });

@@ -3,6 +3,8 @@ import { sendSecureCommand, drawConveyorSystem, getNetworkTraffic, logNetworkTra
 import { login, logout, getCurrentUser, checkPermission, createUser, deleteUser, getAllUsers, importUsersJSON } from './auth.js';
 import { getLogs, clearLogs } from './audit-log.js';
 import { generateNonce, generateHMAC } from './crypto-helper.js';
+import { initDashboard } from './dashboard.js';
+import { initChatWidget } from './chat-widget.js';
 
 // Capturar última trama válida para ataque de replay
 let lastValidPacket = null;
@@ -29,10 +31,17 @@ function updateUI(state) {
   }
   
   // Actualizar indicadores digitales y analógicos en la pantalla
-  document.getElementById('state-display').innerText = state.control.status;
-  document.getElementById('cinta0-angle').innerText = state.physical.currentAngle.toFixed(0) + '°';
-  document.getElementById('hopper-percent').innerText = state.physical.hopperOpenPercent.toFixed(0) + '%';
-  document.getElementById('active-pos-lbl').innerText = `Posición ${state.physical.targetPosition}`;
+  const elStatus = document.getElementById('state-display');
+  if (elStatus) elStatus.innerText = state.control.status;
+  
+  const elAngle = document.getElementById('cinta0-angle');
+  if (elAngle) elAngle.innerText = state.physical.currentAngle.toFixed(0);
+  
+  const elHopper = document.getElementById('hopper-percent');
+  if (elHopper) elHopper.innerText = state.physical.hopperOpenPercent.toFixed(0) + '%';
+  
+  const elPos = document.getElementById('active-pos-lbl');
+  if (elPos) elPos.innerText = `Posición ${state.physical.targetPosition}`;
   
   // Actualizar luces indicadoras LED en el panel
   updateLed('led-ls1', state.outputs.LS1, 'yellow');
@@ -61,20 +70,24 @@ function updateUI(state) {
         const id = key === 'C0' ? 0 : parseInt(key[1]);
         const ledEl = document.getElementById(`led-ldes-c${id}`);
         if (ledEl) {
-          ledEl.className = isLit ? 'led-indicator led-red' : 'led-indicator led-off';
+          ledEl.className = isLit ? 'status-led led-red' : 'status-led led-off';
         }
       }
     }
   }
 
-  // Actualizar KPIs y reportes
-  document.getElementById('kpi-runtime').innerText = formatTime(state.physical.runTimeSeconds);
-  document.getElementById('kpi-batches').innerText = state.physical.batchesProcessed;
-  document.getElementById('kpi-power').innerText = state.physical.powerConsumptionKWh.toFixed(4) + ' kWh';
+  // Actualizar KPIs viejos si existen
+  const elRt = document.getElementById('kpi-runtime');
+  if (elRt) elRt.innerText = formatTime(state.physical.runTimeSeconds);
   
-  // Costo financiero estimado: 0.15 USD por KWh
-  const cost = state.physical.powerConsumptionKWh * 0.15;
-  document.getElementById('kpi-cost').innerText = '$' + cost.toFixed(4) + ' USD';
+  const elBatches = document.getElementById('kpi-batches');
+  if (elBatches) elBatches.innerText = state.physical.batchesProcessed;
+  
+  const elPwr = document.getElementById('kpi-power');
+  if (elPwr) elPwr.innerText = state.physical.powerConsumptionKWh.toFixed(4) + ' kWh';
+  
+  const elCost = document.getElementById('kpi-cost');
+  if (elCost) elCost.innerText = '$' + (state.physical.powerConsumptionKWh * 0.15).toFixed(4) + ' USD';
   
   // Actualizar controles de forzado en el panel del Ingeniero
   if (checkPermission('FORCE_ACTUATOR')) {
@@ -282,38 +295,43 @@ function applyRBACPermissions() {
   
   // 1. Mostrar/Ocultar pestañas del panel
   const tabDash  = document.getElementById('tab-header-dashboard');
+  const tabAnl   = document.getElementById('tab-header-analytics');
   const tabEng   = document.getElementById('tab-header-engineer');
   const tabMgr   = document.getElementById('tab-header-manager');
   const tabSec   = document.getElementById('tab-header-security');
   const tabUsers = document.getElementById('tab-header-users');
   
   if (user.role === 'Operador') {
-    tabDash.style.display = 'inline-block';
-    tabEng.style.display = 'none';
-    tabMgr.style.display = 'none';
-    tabSec.style.display = 'none';
-    tabUsers.style.display = 'none';
+    if(tabDash) tabDash.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'none';
+    if(tabAnl) tabAnl.style.display = 'none';
+    if(tabMgr) tabMgr.style.display = 'none';
+    if(tabSec) tabSec.style.display = 'none';
+    if(tabUsers) tabUsers.style.display = 'none';
     switchTab('dashboard');
   } else if (user.role === 'Gerente') {
-    tabDash.style.display = 'none'; // Acceso exclusivo a métricas
-    tabEng.style.display = 'none';
-    tabMgr.style.display = 'inline-block';
-    tabSec.style.display = 'none';
-    tabUsers.style.display = 'inline-block'; 
-    switchTab('manager');
+    if(tabDash) tabDash.style.display = 'none';
+    if(tabAnl) tabAnl.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'none';
+    if(tabMgr) tabMgr.style.display = 'inline-block';
+    if(tabSec) tabSec.style.display = 'none';
+    if(tabUsers) tabUsers.style.display = 'inline-block'; 
+    switchTab('analytics');
   } else if (user.role === 'Supervisor' || user.role === 'Ingeniero') {
-    tabDash.style.display = 'inline-block';
-    tabEng.style.display = 'inline-block';
-    tabMgr.style.display = 'inline-block';
-    tabSec.style.display = 'inline-block';
-    tabUsers.style.display = 'inline-block';
+    if(tabDash) tabDash.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'inline-block';
+    if(tabMgr) tabMgr.style.display = 'inline-block';
+    if(tabSec) tabSec.style.display = 'inline-block';
+    if(tabUsers) tabUsers.style.display = 'inline-block';
+    if(tabAnl) tabAnl.style.display = 'inline-block';
     switchTab('dashboard');
   } else if (user.role === 'Admin') {
-    tabDash.style.display = 'inline-block';
-    tabEng.style.display = 'inline-block';
-    tabMgr.style.display = 'inline-block';
-    tabSec.style.display = 'inline-block';
-    tabUsers.style.display = 'inline-block';
+    if(tabDash) tabDash.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'inline-block';
+    if(tabMgr) tabMgr.style.display = 'inline-block';
+    if(tabSec) tabSec.style.display = 'inline-block';
+    if(tabUsers) tabUsers.style.display = 'inline-block';
+    if(tabAnl) tabAnl.style.display = 'inline-block';
     switchTab('users');
   }
   
@@ -329,21 +347,44 @@ function applyRBACPermissions() {
   renderAuditLogs();
   
   // Cargar valores de temporizadores en el panel de Ingeniero
-  if (user.role === 'Ingeniero') {
-    document.getElementById('cfg-hopper-delay').value = PLC_STATE.config.hopperOpenDelay;
-    document.getElementById('cfg-cinta0-time').value = PLC_STATE.config.cinta0DischargeTime;
-    document.getElementById('cfg-dest-time').value = PLC_STATE.config.destDischargeTime;
+  if (user.role === 'Ingeniero' || user.role === 'Admin') {
+    const hopperInput = document.getElementById('cfg-hopper-delay');
+    if (hopperInput) hopperInput.value = PLC_STATE.config.hopperOpenDelay;
+    const cinta0Input = document.getElementById('cfg-cinta0-time');
+    if (cinta0Input) cinta0Input.value = PLC_STATE.config.cinta0DischargeTime;
+    const destInput = document.getElementById('cfg-dest-time');
+    if (destInput) destInput.value = PLC_STATE.config.destDischargeTime;
+    
+    // Cargar n8n configs
+    const n8nUrlInput = document.getElementById('cfg-n8n-url');
+    if (n8nUrlInput) n8nUrlInput.value = localStorage.getItem('n8n_url') || 'http://localhost:5678/webhook/hmi-ask';
+    
+    const n8nAuthInput = document.getElementById('cfg-n8n-auth-type');
+    if (n8nAuthInput) n8nAuthInput.value = localStorage.getItem('n8n_auth_type') || 'basic';
+    
+    const n8nCredInput = document.getElementById('cfg-n8n-cred');
+    if (n8nCredInput) n8nCredInput.value = localStorage.getItem('n8n_cred') || 'miguelalexander.urbina@unet.edu.ve:Madagascar=94';
   }
 }
 
 // Navegación de pestañas
 function switchTab(tabId) {
-  const tabs = ['dashboard', 'engineer', 'manager', 'security', 'users'];
+  const tabs = ['dashboard', 'engineer', 'analytics', 'security', 'users'];
   tabs.forEach(t => {
     const pane = document.getElementById(`tab-${t}`);
     const btn  = document.getElementById(`tab-header-${t}`);
-    if (pane) pane.classList.toggle('hidden', t !== tabId);
-    if (btn)  btn.classList.toggle('tab-active', t === tabId);
+    if (pane) {
+      pane.classList.toggle('hidden', t !== tabId);
+      pane.classList.toggle('tab-active', t === tabId);
+    }
+    if (btn) {
+      btn.classList.toggle('tab-active', t === tabId);
+      // Ensure the click event is attached
+      if (!btn.dataset.bound) {
+        btn.addEventListener('click', () => switchTab(t));
+        btn.dataset.bound = 'true';
+      }
+    }
   });
   if (tabId === 'engineer') renderAuditLogs();
   if (tabId === 'users')    renderUsersTable();
@@ -410,6 +451,8 @@ async function renderUsersTable() {
 document.addEventListener('DOMContentLoaded', () => {
   // Inicializar simulación con callback de actualización
   initSimulation(updateUI);
+  initDashboard();
+  initChatWidget();
   
   // Comprobar si hay sesión previa
   applyRBACPermissions();
@@ -472,19 +515,48 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 4. Cambios de Configuración de Temporizadores (Ingeniero)
-  document.getElementById('config-timers-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const hopper = document.getElementById('cfg-hopper-delay').value;
-    const c0 = document.getElementById('cfg-cinta0-time').value;
-    const dest = document.getElementById('cfg-dest-time').value;
-    
-    sendSecureCommand('CONFIG_UPDATE', {
-      hopperOpenDelay: hopper,
-      cinta0DischargeTime: c0,
-      destDischargeTime: dest
+  const configForm = document.getElementById('config-timers-form');
+  if (configForm) {
+    configForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const hopperD = parseInt(document.getElementById('cfg-hopper-delay').value);
+        const cint0T = parseInt(document.getElementById('cfg-cinta0-time').value);
+        const destT = parseInt(document.getElementById('cfg-dest-time').value);
+        
+        const response = await sendSecureCommand('UPDATE_TIMERS', {
+          hopperOpenDelay: hopperD,
+          cinta0DischargeTime: cint0T,
+          destDischargeTime: destT
+        });
+        
+        if (response.success) {
+          alert('Temporizadores actualizados y firmados correctamente.');
+        } else {
+          alert('Fallo de seguridad al actualizar: ' + response.error);
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
     });
-    alert('Temporizadores del PLC actualizados con éxito por firma digital.');
-  });
+  }
+
+  // Eventos para Ajustes n8n
+  const n8nForm = document.getElementById('config-n8n-form');
+  if (n8nForm) {
+    n8nForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const url = document.getElementById('cfg-n8n-url').value;
+      const type = document.getElementById('cfg-n8n-auth-type').value;
+      const cred = document.getElementById('cfg-n8n-cred').value;
+      
+      localStorage.setItem('n8n_url', url);
+      localStorage.setItem('n8n_auth_type', type);
+      localStorage.setItem('n8n_cred', cred);
+      
+      alert('Configuración de n8n guardada localmente.');
+    });
+  }
   
   // 5. Forzado manual de actuadores (Ingeniero)
   const forceSwitches = [
@@ -525,7 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   // 7. Enlace de los botones de pestañas
-  const tabButtons = ['dashboard', 'engineer', 'manager', 'security', 'users'];
+  const tabButtons = ['dashboard', 'engineer', 'manager', 'security', 'users', 'analytics'];
   tabButtons.forEach(t => {
     const btn = document.getElementById(`tab-header-${t}`);
     if (btn) btn.addEventListener('click', () => switchTab(t));

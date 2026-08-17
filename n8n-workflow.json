@@ -1,0 +1,123 @@
+{
+  "name": "Asistente HMI Planta OT",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hmi-ask",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "e81e3ccb-9b4e-4f10-94d1-81765c3639e3",
+      "name": "Webhook HMI",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        280
+      ],
+      "webhookId": "hmi-ask"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.message }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Eres un Asistente Agéntico de Inteligencia Artificial integrado en el SCADA (HMI) de una planta de transporte de material con 4 cintas transportadoras. Responde de manera concisa y profesional.\n\nContexto actual de la planta:\n- OEE: {{ $json.body.context.kpis.oee }}%\n- Disponibilidad: {{ $json.body.context.kpis.availability }}%\n- Alarmas activas: {{ $json.body.context.activeAlarms.length }}\n- Consumo energético: {{ $json.body.context.energy.totalKWh }} kWh\n- Eventos de seguridad detectados: {{ $json.body.context.security.rejections }} intentos bloqueados."
+            }
+          ]
+        }
+      },
+      "id": "7662c686-21f4-44aa-bafe-6126b864a6c6",
+      "name": "Generar Respuesta AI",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [
+        480,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "c1f2b604-8171-482a-a9f4-343274643444",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        460,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "reply",
+              "value": "={{ $json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2b26090e-b79e-4c4f-9a7c-0c538749a2a7",
+      "name": "Formatear Respuesta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        800,
+        280
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook HMI": {
+      "main": [
+        [
+          {
+            "node": "Generar Respuesta AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generar Respuesta AI",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar Respuesta AI": {
+      "main": [
+        [
+          {
+            "node": "Formatear Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f7ab013e-6dcf-4813-beaa-1be1cba37b12",
+  "id": "WKF-001",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

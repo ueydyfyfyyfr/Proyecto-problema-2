@@ -4,6 +4,12 @@ const FILES = [
   "js/audit-log.js",
   "js/auth.js",
   "js/plc-simulation.js",
+  "js/history-store.js",
+  "js/stats-engine.js",
+  "js/charts.js",
+  "js/dashboard.js",
+  "js/n8n-connector.js",
+  "js/chat-widget.js",
   "js/hmi-controller.js",
   "js/app.js",
 ];

@@ -159,7 +159,8 @@ export async function login(username, password) {
     username: key,
     role: user.role,
     name: user.name,
-    isSystem: user.isSystem || false
+    isSystem: user.isSystem || false,
+    capabilities: user.capabilities || []
   };
 
   localStorage.setItem('currentUser', JSON.stringify(currentUser));
@@ -315,6 +316,10 @@ export function checkPermission(action) {
       return R === 'Supervisor' || R === 'Admin';
     case 'VIEW_METRICS':    
       return R === 'Gerente' || R === 'Admin';
+    case 'VIEW_ANALYTICS':    
+      return R === 'Gerente' || R === 'Admin' || R === 'Supervisor';
+    case 'USE_AI_ASSISTANT':
+      return R === 'Admin' || R === 'Gerente' || R === 'Ingeniero' || caps.includes('USE_AI_ASSISTANT');
     case 'MANAGE_USERS':    
       return R === 'Admin' || R === 'Gerente' || R === 'Supervisor';
     default:                

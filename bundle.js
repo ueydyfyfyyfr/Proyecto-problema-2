@@ -198,7 +198,7 @@ function saveLogs() {
 }
 
 // Agregar una entrada de auditoría
-// type: 'INFO' | 'WARNING' | 'SECURITY_ALERT' | 'CONFIG_CHANGE' | 'OPERATION'
+// type: 'INFO' | 'WARNING' | 'SECURITY_ALERT' | 'CONFIG_CHANGE' | 'OPERATION' | 'AI_INTERACTION' | 'AUTH_FAIL'
 function logEvent(type, message, user = 'SYSTEM', details = null) {
   const logEntry = {
     id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
@@ -226,6 +226,17 @@ function logEvent(type, message, user = 'SYSTEM', details = null) {
 function getLogs() {
   loadLogs();
   return auditLogs;
+}
+
+function getLogsSince(timestamp) {
+  loadLogs();
+  const ts = new Date(timestamp).getTime();
+  return auditLogs.filter(log => new Date(log.timestamp).getTime() >= ts);
+}
+
+function getLogsByType(type) {
+  loadLogs();
+  return auditLogs.filter(log => log.type === type);
 }
 
 // Limpiar el registro de auditoría (solo accesible por Administrador / Ingeniero en simulación)
@@ -399,7 +410,8 @@ async function login(username, password) {
     username: key,
     role: user.role,
     name: user.name,
-    isSystem: user.isSystem || false
+    isSystem: user.isSystem || false,
+    capabilities: user.capabilities || []
   };
 
   localStorage.setItem('currentUser', JSON.stringify(currentUser));
@@ -555,6 +567,10 @@ function checkPermission(action) {
       return R === 'Supervisor' || R === 'Admin';
     case 'VIEW_METRICS':    
       return R === 'Gerente' || R === 'Admin';
+    case 'VIEW_ANALYTICS':    
+      return R === 'Gerente' || R === 'Admin' || R === 'Supervisor';
+    case 'USE_AI_ASSISTANT':
+      return R === 'Admin' || R === 'Gerente' || R === 'Ingeniero' || caps.includes('USE_AI_ASSISTANT');
     case 'MANAGE_USERS':    
       return R === 'Admin' || R === 'Gerente' || R === 'Supervisor';
     default:                
@@ -617,7 +633,8 @@ const PLC_STATE = {
     materialOnCinta0: [],     // Partículas de material
     materialOnDest: [],
     runTimeSeconds: 0,        // Contador de tiempo de uso acumulado
-    batchesProcessed: 0,      // Número de lotes de material procesados
+    batchesProcessed: 0,      // Número de lotes
+    unitsTransferred: 0,      // Partículas transferidas de material procesados
     powerConsumptionKWh: 0,   // Consumo estimado
   },
   
@@ -629,6 +646,24 @@ const PLC_STATE = {
     speedSensorPulsePeriod: 100, // ms entre pulsos (10Hz)
   },
   
+
+  // Estadísticas e instrumentación (Fase 2)
+  stats: {
+    stateTime: { IDLE: 0, ROTATING: 0, RUNNING: 0, DISCHARGING_C0: 0, DISCHARGING_DEST: 0, ALARM: 0, EMERGENCY_LOCK: 0 },
+    alarmCount: { C0: 0, C1: 0, C2: 0, C3: 0 },
+    motorSeconds: { MC0: 0, MC1: 0, MC2: 0, MC3: 0, MGIzq: 0, MGDer: 0, MTolAb: 0, MTolCe: 0 },
+    motorKWh: { MC0: 0, MC1: 0, MC2: 0, MC3: 0, MGIzq: 0, MGDer: 0, MTolAb: 0, MTolCe: 0 },
+    motorCycles: { MC0: 0, MC1: 0, MC2: 0, MC3: 0, MGIzq: 0, MGDer: 0, MTolAb: 0, MTolCe: 0 },
+    batchesByDest: { 1: 0, 2: 0, 3: 0 },
+    scrapCount: 0,
+    commandCounts: {},
+    rejectedCommands: {},
+    securityEvents: { COMANDO_NO_FIRMADO: 0, INTEGRIDAD_COMPROMETIDA: 0, ATAQUE_REPLAY_DETECTADO: 0, TRAMA_EXPIRADA: 0, FORMATO_CORRUPTO: 0 },
+    totalElapsedSeconds: 0,
+    firstAlarmAt: null,
+    lastAlarmAt: null,
+    lockdownCount: 0
+  },
   // Estado interno del control secuencial del PLC (máquina de estados)
   control: {
     status: 'IDLE',          // 'IDLE', 'ROTATING', 'RUNNING', 'DISCHARGING_C0', 'DISCHARGING_DEST', 'ALARM', 'EMERGENCY_LOCK'
@@ -655,7 +690,7 @@ const PLC_STATE = {
 var PLC_SHARED_SECRET = "PlcSuperSecretKeyOT2026!";
 
 // Registro de Nonces recibidos para prevenir ataques de Replay
-const receivedNonces = new Set();
+const receivedNonces = new Map();
 const maxNonceAgeMs = 60000; // Rechazar comandos con timestamps mayores a 60 segundos
 
 // Iniciar simulación física
@@ -681,6 +716,9 @@ function initSimulation(onStateUpdate) {
       PLC_STATE.physical.runTimeSeconds = m.runTimeSeconds || 0;
       PLC_STATE.physical.batchesProcessed = m.batchesProcessed || 0;
       PLC_STATE.physical.powerConsumptionKWh = m.powerConsumptionKWh || 0;
+      PLC_STATE.physical.unitsTransferred = m.unitsTransferred || 0;
+      if (m.stats) PLC_STATE.stats = m.stats;
+
     } catch(e) {}
   }
 
@@ -754,6 +792,7 @@ function updatePhysics(dt) {
       m.x += 1.5 * dt; // velocidad de avance
     });
     
+    
     // Transferencia de Cinta 0 a la cinta de destino correspondiente al ángulo actual
     PLC_STATE.physical.materialOnCinta0 = PLC_STATE.physical.materialOnCinta0.filter(m => {
       if (m.x >= 1.0) { // Fin de Cinta 0
@@ -765,14 +804,16 @@ function updatePhysics(dt) {
             x: 0,
             y: 10 + Math.random() * 10
           });
-          PLC_STATE.physical.batchesProcessed++;
+          PLC_STATE.physical.unitsTransferred++;
+        } else {
+          PLC_STATE.stats.scrapCount++;
         }
         return false; // Remover de Cinta 0
       }
       return true;
     });
-  }
-  
+  } // <-- MISSING CLOSING BRACE
+
   // Mover material en las Cintas de Destino (1, 2, 3)
   PLC_STATE.physical.materialOnDest.forEach(m => {
     const motorActive = PLC_STATE.outputs[`MC${m.cinta}`];
@@ -799,12 +840,41 @@ function updatePhysics(dt) {
     const powerKW = activeMotorsCount * 1.5;
     PLC_STATE.physical.powerConsumptionKWh += (powerKW * dt) / 3600;
     
-    // Guardar métricas periódicamente
-    localStorage.setItem('plcMetrics', JSON.stringify({
-      runTimeSeconds: PLC_STATE.physical.runTimeSeconds,
-      batchesProcessed: PLC_STATE.physical.batchesProcessed,
-      powerConsumptionKWh: PLC_STATE.physical.powerConsumptionKWh
-    }));
+    // Estadísticas
+    if (!PLC_STATE.previousOutputs) PLC_STATE.previousOutputs = {};
+    ['MC0','MC1','MC2','MC3','MGIzq','MGDer','MTolAb','MTolCe'].forEach(motor => {
+      if (PLC_STATE.outputs[motor]) {
+        PLC_STATE.stats.motorSeconds[motor] += dt;
+        PLC_STATE.stats.motorKWh[motor] += (1.5 * dt) / 3600;
+      }
+      if (PLC_STATE.outputs[motor] && !PLC_STATE.previousOutputs[motor]) {
+        PLC_STATE.stats.motorCycles[motor]++;
+      }
+      PLC_STATE.previousOutputs[motor] = PLC_STATE.outputs[motor];
+    });
+
+    PLC_STATE.stats.totalElapsedSeconds += dt;
+    if (PLC_STATE.stats.stateTime[PLC_STATE.control.status] !== undefined) {
+      PLC_STATE.stats.stateTime[PLC_STATE.control.status] += dt;
+    }
+
+    if (!PLC_STATE.lastSaveTime || (Date.now() - PLC_STATE.lastSaveTime > 5000)) {
+      PLC_STATE.lastSaveTime = Date.now();
+      
+      // Purge nonces
+      const cutoff = Date.now() - maxNonceAgeMs;
+      for (const [n, ts] of receivedNonces.entries()) {
+        if (ts < cutoff) receivedNonces.delete(n);
+      }
+
+      localStorage.setItem('plcMetrics', JSON.stringify({
+        runTimeSeconds: PLC_STATE.physical.runTimeSeconds,
+        batchesProcessed: PLC_STATE.physical.batchesProcessed,
+        unitsTransferred: PLC_STATE.physical.unitsTransferred,
+        powerConsumptionKWh: PLC_STATE.physical.powerConsumptionKWh,
+        stats: PLC_STATE.stats
+      }));
+    }
   }
 }
 
@@ -940,7 +1010,18 @@ function updatePLCLogic(dt) {
         PLC_STATE.outputs[`LConC${activeDest}`] = false;
         PLC_STATE.outputs[`LDesC${activeDest}`] = true;
         
+        
         PLC_STATE.control.status = 'IDLE';
+        PLC_STATE.physical.batchesProcessed++;
+        if (PLC_STATE.stats.batchesByDest[activeDest] !== undefined) {
+          PLC_STATE.stats.batchesByDest[activeDest]++;
+        }
+        
+        // Disparar evento de estado para el motor estadístico
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('plc-state-change', { detail: { status: 'IDLE' } }));
+        }
+
         logEvent('INFO', `Descarga de Cinta de Destino ${activeDest} completada. Proceso en REPOSO.`, 'PLC');
       }
       updateStatusLamps();
@@ -1032,6 +1113,13 @@ function stopAllMotors() {
 function triggerAlarm(beltKey, msg) {
   PLC_STATE.control.status = 'ALARM';
   PLC_STATE.control.alarms[beltKey] = true;
+  PLC_STATE.stats.alarmCount[beltKey]++;
+  if (!PLC_STATE.stats.firstAlarmAt) PLC_STATE.stats.firstAlarmAt = new Date().toISOString();
+  PLC_STATE.stats.lastAlarmAt = new Date().toISOString();
+  
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('plc-alarm', { detail: { beltKey, msg } }));
+  }
   
   // Detener la cinta fallida de inmediato
   if (beltKey === 'C0') {
@@ -1112,7 +1200,7 @@ async function handleNetworkMessage(encryptedOrSignedMessageStr) {
     }
     
     // Registrar el Nonce como utilizado
-    receivedNonces.add(nonce);
+    receivedNonces.set(nonce, Date.now());
     
     // Ejecutar el comando aprobado por seguridad
     const result = executeCommand(packet.payload);
@@ -1239,8 +1327,657 @@ function executeCommand(payload) {
 function triggerSecurityLockdown(reason, detailMsg) {
   PLC_STATE.control.securityLockdown = true;
   PLC_STATE.control.securityLockReason = reason;
+  PLC_STATE.stats.lockdownCount++;
+  if (PLC_STATE.stats.securityEvents[reason] !== undefined) {
+    PLC_STATE.stats.securityEvents[reason]++;
+  }
+  
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('plc-lockdown', { detail: { reason, detailMsg } }));
+  }
   stopAllMotors();
   logEvent('SECURITY_ALERT', `ALERTA DE SEGURIDAD OT: ${detailMsg}`, 'PLC_FIREWALL', { reason, detailMsg });
+}
+
+
+/* === js/history-store.js === */
+
+class HistoryStore {
+  constructor(maxSize = 2000) {
+    this.maxSize = maxSize;
+    this.key = 'plcHistory';
+    this.buffer = this.load();
+    this.startSampling();
+  }
+
+  load() {
+    try {
+      const data = localStorage.getItem(this.key);
+      return data ? JSON.parse(data) : [];
+    } catch(e) { return []; }
+  }
+
+  save() {
+    localStorage.setItem(this.key, JSON.stringify(this.buffer));
+  }
+
+  push(sample) {
+    this.buffer.push(sample);
+    if (this.buffer.length > this.maxSize) {
+      this.buffer.shift();
+    }
+    this.save();
+  }
+
+  range(desde, hasta) {
+    return this.buffer.filter(s => s.t >= desde && s.t <= hasta);
+  }
+
+  downsample(n) {
+    if (this.buffer.length <= n) return this.buffer;
+    const result = [];
+    const step = this.buffer.length / n;
+    for (let i = 0; i < n; i++) {
+      result.push(this.buffer[Math.floor(i * step)]);
+    }
+    return result;
+  }
+
+  clear() {
+    this.buffer = [];
+    this.save();
+  }
+
+  sizeBytes() {
+    return localStorage.getItem(this.key)?.length || 0;
+  }
+
+  getLatest() {
+    return this.buffer[this.buffer.length - 1] || null;
+  }
+
+  getAll() {
+    return this.buffer;
+  }
+
+  startSampling() {
+    setInterval(() => {
+      // Tomar muestra si el PLC ha sido usado
+      if (PLC_STATE.physical.runTimeSeconds > 0) {
+        let activeMotors = 0;
+        ['MC0','MC1','MC2','MC3','MGIzq','MGDer','MTolAb','MTolCe'].forEach(m => {
+          if (PLC_STATE.outputs[m]) activeMotors++;
+        });
+        
+        let alarmSum = 0;
+        if (PLC_STATE.stats && PLC_STATE.stats.alarmCount) {
+          alarmSum = Object.values(PLC_STATE.stats.alarmCount).reduce((a,b) => a+b, 0);
+        }
+
+        this.push({
+          t: Date.now(),
+          status: PLC_STATE.control.status,
+          batches: PLC_STATE.physical.batchesProcessed,
+          units: PLC_STATE.physical.unitsTransferred || 0,
+          scrap: PLC_STATE.stats ? PLC_STATE.stats.scrapCount : 0,
+          kWh: PLC_STATE.physical.powerConsumptionKWh,
+          activeMotors: activeMotors,
+          alarmCount: alarmSum
+        });
+      }
+    }, 5000);
+  }
+}
+
+const historyStore = new HistoryStore();
+
+
+/* === js/stats-engine.js === */
+
+function computeKPIs() {
+  const stats = PLC_STATE.stats || {};
+  const tTotal = stats.totalElapsedSeconds || 1;
+  const tRunning = (stats.stateTime && stats.stateTime.RUNNING) || 0;
+  
+  // Disponibilidad
+  const availability = tRunning / tTotal;
+  
+  // Rendimiento (Performance)
+  // Asumamos que un ciclo ideal de Cinta 0 toma unos 15 segundos y el vaciado 20s. 
+  // Aproximaremos a 1 lote por minuto como tasa teórica máxima para cálculos de OEE realistas en esta simulación.
+  const expectedBatches = tRunning / 60;
+  const performance = expectedBatches > 0 ? PLC_STATE.physical.batchesProcessed / expectedBatches : 0;
+  
+  // Calidad (Quality)
+  const scrap = stats.scrapCount || 0;
+  const units = PLC_STATE.physical.unitsTransferred || 0;
+  const quality = (units + scrap > 0) ? units / (units + scrap) : 1;
+  
+  const oee = availability * Math.min(1, performance) * quality;
+
+  return {
+    availability: availability * 100,
+    performance: Math.min(1, performance) * 100,
+    quality: quality * 100,
+    oee: oee * 100,
+    batchesProcessed: PLC_STATE.physical.batchesProcessed,
+    unitsTransferred: units,
+    scrapCount: scrap,
+    runTimeSeconds: PLC_STATE.physical.runTimeSeconds
+  };
+}
+
+function computeReliability() {
+  const stats = PLC_STATE.stats || {};
+  const tTotal = stats.totalElapsedSeconds || 1;
+  const tAlarm = (stats.stateTime && stats.stateTime.ALARM) || 0;
+  const alarmSum = stats.alarmCount ? Object.values(stats.alarmCount).reduce((a,b)=>a+b,0) : 0;
+  
+  // MTBF = Tiempo Operativo / nº alarmas
+  const operativeTime = tTotal - tAlarm;
+  const mtbf = alarmSum > 0 ? operativeTime / alarmSum : operativeTime;
+  
+  // MTTR = Tiempo en Alarma / nº alarmas
+  const mttr = alarmSum > 0 ? tAlarm / alarmSum : 0;
+
+  return {
+    mtbf,
+    mttr,
+    alarmSum,
+    alarmCountByBelt: stats.alarmCount || {},
+    lockdowns: stats.lockdownCount || 0
+  };
+}
+
+function computeEnergy(tarifa = 0.15) {
+  const stats = PLC_STATE.stats || {};
+  const totalKWh = PLC_STATE.physical.powerConsumptionKWh || 0;
+  
+  return {
+    totalKWh,
+    totalCost: totalKWh * tarifa,
+    motorKWh: stats.motorKWh || {},
+    motorCycles: stats.motorCycles || {}
+  };
+}
+
+function computeSecurity() {
+  const stats = PLC_STATE.stats || {};
+  const logs = getLogs();
+  const rejections = logs.filter(l => l.type === 'SECURITY_ALERT').length;
+  
+  return {
+    lockdowns: stats.lockdownCount || 0,
+    events: stats.securityEvents || {},
+    rejections,
+    totalEvents: logs.length
+  };
+}
+
+// Analítica temporal (Ejemplo: throughput de la ventana histórica)
+function computeTrends(windowMinutes = 5) {
+  const buffer = historyStore.getAll();
+  if (buffer.length < 2) return { throughput: 0, trend: 0 };
+  
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+  const windowData = buffer.filter(s => (now - s.t) <= windowMs);
+  
+  if (windowData.length < 2) return { throughput: 0, trend: 0 };
+  
+  const first = windowData[0];
+  const last = windowData[windowData.length - 1];
+  
+  const dBatches = last.batches - first.batches;
+  const dT = (last.t - first.t) / (1000 * 60); /* minutes */
+  
+  return {
+    throughput: dT > 0 ? dBatches / dT : 0, /* lotes/min */
+    windowMinutes: dT
+  };
+}
+
+
+/* === js/charts.js === */
+function renderGauge(containerId, value, min = 0, max = 100, title = '', suffix = '%') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  const pct = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
+  const angle = (pct / 100) * 180 - 90;
+  let color = '#a855f7';
+  if (pct < 50) color = '#d8b4fe';
+  if (pct < 20) color = '#ef4444';
+  
+  const svg = `
+    <svg viewBox="0 0 200 120" style="width:100%; height:100%;">
+      <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#333" stroke-width="20" stroke-linecap="round"/>
+      <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="${color}" stroke-width="20" stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="${251.2 * (1 - pct/100)}"/>
+      <text x="100" y="90" text-anchor="middle" fill="white" font-size="28" font-weight="bold">${Math.round(value)}${suffix}</text>
+      <text x="100" y="115" text-anchor="middle" fill="#aaa" font-size="12">${title}</text>
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+
+function renderBarChart(containerId, data, labels, title = '') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  const maxVal = Math.max(...data, 1);
+  const barWidth = 40;
+  const spacing = 20;
+  const w = Math.max(data.length * (barWidth + spacing) + spacing, 300);
+  
+  let bars = '';
+  data.forEach((val, i) => {
+    const h = (val / maxVal) * 80;
+    const x = spacing + i * (barWidth + spacing);
+    bars += `
+      <rect x="${x}" y="${100 - h}" width="${barWidth}" height="${h}" fill="#a855f7" rx="2" />
+      <text x="${x + barWidth/2}" y="115" text-anchor="middle" fill="#aaa" font-size="10">${labels[i]}</text>
+      <text x="${x + barWidth/2}" y="${95 - h}" text-anchor="middle" fill="white" font-size="10">${val.toFixed(1)}</text>
+    `;
+  });
+  
+  const svg = `
+    <svg viewBox="0 0 ${w} 130" style="width:100%; height:100%;">
+      ${title ? `<text x="${w/2}" y="15" text-anchor="middle" fill="#ccc" font-size="12">${title}</text>` : ''}
+      <line x1="0" y1="100" x2="${w}" y2="100" stroke="#555" stroke-width="1" />
+      ${bars}
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+
+function renderSparkline(containerId, data, color = '#a855f7') {
+  const container = document.getElementById(containerId);
+  if (!container || data.length < 2) return;
+  
+  const w = 100, h = 30;
+  const maxVal = Math.max(...data, 0.01);
+  const minVal = Math.min(...data);
+  const range = maxVal - minVal || 1;
+  
+  const dx = w / (data.length - 1);
+  const pts = data.map((v, i) => {
+    const x = i * dx;
+    const y = h - ((v - minVal) / range) * h;
+    return `${x},${y}`;
+  }).join(' ');
+  
+  const svg = `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:100%;" preserveAspectRatio="none">
+      <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" />
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+
+function renderDonut(containerId, data, labels, colors) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  const total = data.reduce((a,b)=>a+b,0) || 1;
+  let acc = 0;
+  let paths = '';
+  let legend = '';
+  
+  data.forEach((val, i) => {
+    const pct = val / total;
+    const angle1 = acc * Math.PI * 2;
+    acc += pct;
+    const angle2 = acc * Math.PI * 2;
+    
+    const x1 = 50 + 40 * Math.sin(angle1);
+    const y1 = 50 - 40 * Math.cos(angle1);
+    const x2 = 50 + 40 * Math.sin(angle2);
+    const y2 = 50 - 40 * Math.cos(angle2);
+    
+    const largeArc = pct > 0.5 ? 1 : 0;
+    if (pct >= 1) { 
+      paths += `<circle cx="50" cy="50" r="40" fill="none" stroke="${colors[i]}" stroke-width="15" />`;
+    } else if (pct > 0) {
+      paths += `<path d="M ${x1} ${y1} A 40 40 0 ${largeArc} 1 ${x2} ${y2}" fill="none" stroke="${colors[i]}" stroke-width="15" />`;
+    }
+    
+    legend += `
+      <div style="display:flex; align-items:center; font-size:10px; color:#aaa; margin-top:4px;">
+        <div style="width:10px; height:10px; background:${colors[i]}; margin-right:5px; border-radius:2px;"></div>
+        ${labels[i]}: ${val}
+      </div>
+    `;
+  });
+  
+  container.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:center; height:100%;">
+      <svg viewBox="0 0 100 100" style="width:120px; height:120px;">
+        ${paths}
+        <text x="50" y="55" text-anchor="middle" fill="white" font-size="14" font-weight="bold">${total}</text>
+      </svg>
+      <div style="margin-left: 20px;">
+        ${legend}
+      </div>
+    </div>
+  `;
+}
+
+function renderHorizontalBar(containerId, data, labels, title = '') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  const maxVal = Math.max(...data, 1);
+  const barHeight = 20;
+  const spacing = 10;
+  const h = data.length * (barHeight + spacing) + spacing + 20;
+  const w = 300;
+  
+  let bars = '';
+  data.forEach((val, i) => {
+    const width = (val / maxVal) * (w - 100);
+    const y = spacing + i * (barHeight + spacing) + 20;
+    bars += `
+      <text x="5" y="${y + 14}" fill="#aaa" font-size="10">${labels[i]}</text>
+      <rect x="80" y="${y}" width="${width}" height="${barHeight}" fill="#a855f7" rx="2" />
+      <text x="${80 + width + 5}" y="${y + 14}" fill="white" font-size="10">${val.toFixed(1)}</text>
+    `;
+  });
+  
+  const svg = `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:100%;">
+      ${title ? `<text x="${w/2}" y="15" text-anchor="middle" fill="#ccc" font-size="12">${title}</text>` : ''}
+      ${bars}
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+
+
+/* === js/dashboard.js === */
+
+let updateInterval = null;
+
+function initDashboard() {
+  if (updateInterval) clearInterval(updateInterval);
+  updateInterval = setInterval(refreshDashboard, 1000); // 1 Hz
+  
+  // Render inicial para que no se vea vacío el primer segundo
+  setTimeout(refreshDashboard, 100);
+}
+
+function refreshDashboard() {
+  const tabAnalytics = document.getElementById('tab-analytics');
+  if (!tabAnalytics) return;
+  
+  const isAnalyticsVisible = !tabAnalytics.classList.contains('hidden');
+  if (!isAnalyticsVisible) return;
+
+  const kpis = computeKPIs();
+  const rel = computeReliability();
+  const energy = computeEnergy();
+  
+  if (isAnalyticsVisible) {
+    const elPower = document.getElementById('kpi-power');
+    const elCost = document.getElementById('kpi-cost');
+    if (elPower) elPower.innerText = `${energy.totalKWh.toFixed(3)} kWh`;
+    if (elCost) elCost.innerText = `$${energy.totalCost.toFixed(3)} USD`;
+    
+    const labels = ['C0', 'C1', 'C2', 'C3', 'Tolva/MG'];
+    const data = [
+      energy.motorKWh['MC0'] || 0,
+      energy.motorKWh['MC1'] || 0,
+      energy.motorKWh['MC2'] || 0,
+      energy.motorKWh['MC3'] || 0,
+      (energy.motorKWh['MTolAb'] || 0) + (energy.motorKWh['MTolCe'] || 0) + (energy.motorKWh['MGIzq'] || 0) + (energy.motorKWh['MGDer'] || 0)
+    ];
+    renderBarChart('chart-energy', data, labels, '');
+
+    const cintasHours = [
+      ((energy.motorKWh['MC0'] || 0) / 1.5).toFixed(2),
+      ((energy.motorKWh['MC1'] || 0) / 1.5).toFixed(2),
+      ((energy.motorKWh['MC2'] || 0) / 1.5).toFixed(2),
+      ((energy.motorKWh['MC3'] || 0) / 1.5).toFixed(2)
+    ].map(Number);
+    renderHorizontalBar('chart-maintenance', cintasHours, ['C0', 'C1', 'C2', 'C3'], 'Horas de uso por cinta (Simulado)');
+  
+    const elOee = document.getElementById('kpi-oee');
+    const elAvail = document.getElementById('kpi-avail');
+    const elPerf = document.getElementById('kpi-perf');
+    const elMtbf = document.getElementById('kpi-mtbf');
+    
+    if (elOee) elOee.innerText = `${kpis.oee.toFixed(1)}%`;
+    if (elAvail) elAvail.innerText = `${kpis.availability.toFixed(1)}%`;
+    if (elPerf) elPerf.innerText = `${kpis.performance.toFixed(1)}%`;
+    if (elMtbf) elMtbf.innerText = `${rel.mtbf.toFixed(0)}s`;
+    
+    const alarms = [
+      rel.alarmCountByBelt['C0'] || 0,
+      rel.alarmCountByBelt['C1'] || 0,
+      rel.alarmCountByBelt['C2'] || 0,
+      rel.alarmCountByBelt['C3'] || 0
+    ];
+    renderBarChart('chart-alarms', alarms, ['C0', 'C1', 'C2', 'C3'], '');
+    
+    const dest = PLC_STATE?.stats?.batchesByDest || {1:0, 2:0, 3:0};
+    const destData = [dest[1] || 0, dest[2] || 0, dest[3] || 0];
+    if (destData.some(d => d > 0)) {
+        renderDonut('chart-destinations', destData, ['Dest 1', 'Dest 2', 'Dest 3'], ['#00e676', '#ff9100', '#00e5ff']);
+    } else {
+        renderDonut('chart-destinations', [1], ['Sin Lotes'], ['#333']);
+    }
+  }
+}
+
+
+/* === js/n8n-connector.js === */
+
+const N8N_WEBHOOK_URL = 'http://localhost:5678/webhook/hmi-ask'; // Configurable URL
+let connectorActive = false;
+
+async function askAgent(message, history) {
+  const payload = {
+    message,
+    history,
+    context: {
+      kpis: computeKPIs(),
+      reliability: computeReliability(),
+      energy: computeEnergy(),
+      security: computeSecurity(),
+      status: PLC_STATE.control.status,
+      activeAlarms: Object.keys(PLC_STATE.control.alarms || {}).filter(k => PLC_STATE.control.alarms[k]),
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  // Cargar configuración desde localStorage (establecida en la pestaña de Ajustes)
+  // Hardcode configuration so the user never has to save it again
+  const cfgUrl = localStorage.getItem('n8n_url') || 'https://agentes.henkki.co/webhook-test/hmi-ask';
+  const authType = localStorage.getItem('n8n_auth_type') || 'none';
+  const authCred = localStorage.getItem('n8n_cred') || '';
+
+  const headers = { 'Content-Type': 'application/json' };
+  
+  if (authType === 'basic' && authCred) {
+    headers['Authorization'] = 'Basic ' + btoa(authCred);
+  } else if (authType === 'header' && authCred) {
+    headers['Authorization'] = authCred;
+    // O si prefieren x-api-key, esto dependerá del n8n. Por defecto se usa Authorization.
+    // headers['x-api-key'] = authCred; 
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds timeout
+    
+    const response = await fetch(cfgUrl, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) throw new Error('N8N HTTP Error: ' + response.status);
+    
+    connectorActive = true;
+    const data = await response.json();
+    return { text: data.reply || data.output || "Respuesta vacía del agente.", isFallback: false };
+    
+  } catch (err) {
+    connectorActive = false;
+    return { text: generateFallbackResponse(message), isFallback: true };
+  }
+}
+
+function isAgentConnected() {
+  return connectorActive;
+}
+
+function generateFallbackResponse(msg) {
+  const lowerMsg = msg.toLowerCase();
+  const kpis = computeKPIs();
+  
+  if (lowerMsg.includes('oee')) {
+    return `(Local) Actualmente el OEE es del ${kpis.oee.toFixed(1)}% (Disponibilidad: ${kpis.availability.toFixed(1)}%, Rendimiento: ${kpis.performance.toFixed(1)}%, Calidad: ${kpis.quality.toFixed(1)}%).`;
+  }
+  if (lowerMsg.includes('alarma') || lowerMsg.includes('falla') || lowerMsg.includes('error')) {
+    const rel = computeReliability();
+    return `(Local) Se han registrado ${rel.alarmSum} alarmas en total. El tiempo medio entre fallos (MTBF) actual es de ${rel.mtbf.toFixed(0)} segundos.`;
+  }
+  if (lowerMsg.includes('energia') || lowerMsg.includes('consumo') || lowerMsg.includes('costo')) {
+    const e = computeEnergy();
+    return `(Local) El consumo energético acumulado es de ${e.totalKWh.toFixed(3)} kWh, con un costo estimado de $${e.totalCost.toFixed(2)} USD.`;
+  }
+  if (lowerMsg.includes('lote') || lowerMsg.includes('produccion')) {
+    return `(Local) Se han procesado ${kpis.batchesProcessed} lotes completos. Se han transferido un total de ${kpis.unitsTransferred} unidades.`;
+  }
+  if (lowerMsg.includes('seguridad') || lowerMsg.includes('ciberseguridad') || lowerMsg.includes('ataque')) {
+    const sec = computeSecurity();
+    return `(Local) Han ocurrido ${sec.rejections} alertas de seguridad que causaron ${sec.lockdowns} bloqueos preventivos (lockdowns) en el sistema OT.`;
+  }
+  
+  return `(Modo Local / Sin Conexión a n8n) No logro conectar con mi servidor principal. Actualmente te puedo responder de forma limitada sobre el OEE, Alarmas, Producción, Energía o Ciberseguridad si usas esas palabras clave.`;
+}
+
+
+/* === js/chat-widget.js === */
+
+let chatHistory = [];
+
+function initChatWidget() {
+  const btnOpen = document.getElementById('btn-open-chat');
+  const btnClose = document.getElementById('btn-toggle-chat');
+  const chatWidget = document.getElementById('ai-chat-widget');
+  const btnSend = document.getElementById('btn-send-chat');
+  const input = document.getElementById('chat-input');
+  
+  if (!btnOpen || !chatWidget) return;
+  
+  // Mostrar el botón de abrir si tiene permisos
+  setInterval(() => {
+    const hasPerm = checkPermission('USE_AI_ASSISTANT');
+    if (hasPerm && chatWidget.classList.contains('hidden')) {
+      btnOpen.classList.remove('hidden');
+    } else {
+      btnOpen.classList.add('hidden');
+      if (!hasPerm && !chatWidget.classList.contains('hidden')) {
+        chatWidget.classList.add('hidden');
+      }
+    }
+  }, 1000);
+  
+  btnOpen.addEventListener('click', () => {
+    chatWidget.classList.remove('hidden');
+    btnOpen.classList.add('hidden');
+    input.focus();
+  });
+  
+  btnClose.addEventListener('click', () => {
+    chatWidget.classList.add('hidden');
+    btnOpen.classList.remove('hidden');
+  });
+  
+  btnSend.addEventListener('click', handleSend);
+  
+  // Quick replies
+  const quickReplies = document.querySelectorAll('.btn-quick-reply');
+  quickReplies.forEach(btn => {
+    btn.addEventListener('click', () => {
+      input.value = btn.innerText;
+      sendBtn.click();
+    });
+  });
+
+  input.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') handleSend();
+  });
+  
+  // Polling para el estado de conexión del led
+  setInterval(() => {
+    const led = document.getElementById('chat-status-led');
+    if (led) {
+      if (isAgentConnected()) {
+        led.className = 'status-led led-green';
+        led.title = 'Agente N8N Conectado';
+      } else {
+        led.className = 'status-led led-orange';
+        led.title = 'Modo Local / Degradado (Sin conexión)';
+      }
+    }
+  }, 2000);
+}
+
+async function handleSend() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  
+  input.value = '';
+  addMessage(text, 'user');
+  
+  // Guardar en auditoría
+  const currentUser = getCurrentUser();
+  logEvent('AI_INTERACTION', `Consulta al Asistente IA: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`, currentUser ? currentUser.name : 'Unknown');
+  
+  // Mostrar indicador de "escribiendo..."
+  const thinkingId = addMessage('...', 'bot-thinking');
+  
+  const historyContext = chatHistory.slice(-6); // últimos 6 mensajes
+  
+  try {
+    const response = await askAgent(text, historyContext);
+    
+    // Remover thinking
+    const el = document.getElementById(thinkingId);
+    if (el) el.remove();
+    
+    addMessage(response.text, 'bot');
+    chatHistory.push({ role: 'user', content: text });
+    chatHistory.push({ role: 'assistant', content: response.text });
+    
+  } catch (err) {
+    const el = document.getElementById(thinkingId);
+    if (el) el.remove();
+    addMessage('Error interno al consultar al agente.', 'bot');
+  }
+}
+
+function addMessage(text, type) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  const id = 'msg-' + Date.now() + '-' + Math.floor(Math.random()*1000);
+  div.id = id;
+  
+  if (type === 'user') {
+    div.className = 'msg user';
+  } else if (type === 'bot' || type === 'bot-thinking') {
+    div.className = 'msg bot';
+  }
+  
+  div.textContent = text; // Previene XSS
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
 }
 
 
@@ -1301,32 +2038,277 @@ async function sendSecureCommand(command, args = null) {
   return response;
 }
 
+
 // -------------------------------------------------------------
-// RENDERIZADOR DEL PROCESO FÍSICO EN CANVAS 2D — PREMIUM HMI
+// RENDERIZADOR DEL PROCESO FÍSICO EN CANVAS 2D — COCKPIT INDUSTRIAL (NUEVO DISEÑO 3D-ISH)
 // -------------------------------------------------------------
 
-// Utilidades de dibujo
-function createMetalGradient(ctx, x, y, w, h, baseColor, highlightColor) {
-  const grad = ctx.createLinearGradient(x, y, x, y + h);
-  grad.addColorStop(0, highlightColor);
-  grad.addColorStop(0.3, baseColor);
-  grad.addColorStop(0.7, baseColor);
-  grad.addColorStop(1, highlightColor);
-  return grad;
+function drawTrapezoid(ctx, x, y, topW, bottomW, h, fillStyle) {
+  ctx.beginPath();
+  ctx.moveTo(x - topW/2, y);
+  ctx.lineTo(x + topW/2, y);
+  ctx.lineTo(x + bottomW/2, y + h);
+  ctx.lineTo(x - bottomW/2, y + h);
+  ctx.closePath();
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
 }
 
-function drawRoundedRect(ctx, x, y, w, h, r) {
+function drawIsometricBelt(ctx, x, y, width, length, angleRad, isRunning, label) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angleRad);
+  
+  // 1. Sombra exterior
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(-width/2, 5, width, length);
+  ctx.shadowBlur = 0;
+
+  // 2. Chasis Metálico (Base Zinc)
+  const chassisGrad = ctx.createLinearGradient(-width/2 - 8, 0, width/2 + 8, 0);
+  chassisGrad.addColorStop(0, '#09090b');
+  chassisGrad.addColorStop(0.2, '#27272a');
+  chassisGrad.addColorStop(0.8, '#27272a');
+  chassisGrad.addColorStop(1, '#09090b');
+  
+  ctx.fillStyle = chassisGrad;
+  // Borde redondeado simulado con un path
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.roundRect(-width/2 - 6, -6, width + 12, length + 12, 5);
+  ctx.fill();
+  
+  // 3. Rieles laterales Neón (Brillan si está corriendo)
+  if (isRunning) {
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = '#a855f7';
+    ctx.strokeStyle = '#a855f7';
+  } else {
+    ctx.strokeStyle = '#3f3f46';
+  }
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-width/2 - 2, -2); ctx.lineTo(-width/2 - 2, length + 2);
+  ctx.moveTo(width/2 + 2, -2); ctx.lineTo(width/2 + 2, length + 2);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // 4. Superficie de la banda (Goma oscura)
+  const beltGrad = ctx.createLinearGradient(0, 0, 0, length);
+  beltGrad.addColorStop(0, '#18181b');
+  beltGrad.addColorStop(0.5, '#27272a');
+  beltGrad.addColorStop(1, '#18181b');
+  ctx.fillStyle = beltGrad;
+  ctx.fillRect(-width/2, 0, width, length);
+
+  // 5. Rodillos metálicos con brillo
+  const rollerGrad = ctx.createLinearGradient(-width/2, 0, width/2, 0);
+  rollerGrad.addColorStop(0, '#18181b');
+  rollerGrad.addColorStop(0.5, '#71717a');
+  rollerGrad.addColorStop(1, '#18181b');
+  
+  ctx.fillStyle = rollerGrad;
+  for(let dy = 10; dy < length - 10; dy += 20) {
+    ctx.fillRect(-width/2 + 2, dy, width - 4, 6);
+  }
+
+  // 6. Animación de Flujo (Láseres Púrpura)
+  if (isRunning) {
+    const shift = (Date.now() / 15) % 40;
+    ctx.strokeStyle = 'rgba(216, 180, 254, 0.8)'; // Light Purple
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = '#d8b4fe';
+    ctx.lineWidth = 2;
+    for(let dy = shift - 40; dy < length; dy += 40) {
+      if (dy > 0 && dy < length) {
+        ctx.beginPath();
+        // Forma de V para dar efecto de avance
+        ctx.moveTo(-width/2 + 10, dy - 5);
+        ctx.lineTo(0, dy + 5);
+        ctx.lineTo(width/2 - 10, dy - 5);
+        ctx.stroke();
+      }
+    }
+    ctx.shadowBlur = 0;
+  }
+  
+  // 7. Etiqueta Holográfica
+  ctx.rotate(-angleRad);
+  ctx.fillStyle = isRunning ? '#d8b4fe' : '#a1a1aa';
+  ctx.font = 'bold 13px "JetBrains Mono"';
+  ctx.textAlign = 'center';
+  if (isRunning) {
+    ctx.shadowBlur = 5;
+    ctx.shadowColor = '#a855f7';
+  }
+  
+  // Posicionamiento inteligente del texto según el ángulo
+  let textY = length/2 + 40;
+  if (Math.abs(angleRad) > 1.5) textY = -length/2 - 30; // Si está boca abajo
+  
+  ctx.fillText(label, 0, textY);
+  ctx.shadowBlur = 0;
+  
+  ctx.restore();
+}
+
+function draw3DHopper(ctx, x, y, openPercent, isRunning) {
+  // ==========================================
+  // ESTILO TOLVA PREMIUM 3D CYBERPUNK
+  // ==========================================
+  const hopperTopW = 120;
+  const hopperBotW = 40;
+  const hopperH = 100;
+  const topY = y - hopperH;
+  
+  // 1. Shadow/Glow base
+  ctx.shadowBlur = 20;
+  ctx.shadowColor = 'rgba(168, 85, 247, 0.3)';
+  
+  // 2. Main Body Gradient (Metallic Dark Zinc)
+  const bodyGrad = ctx.createLinearGradient(x - hopperTopW/2, 0, x + hopperTopW/2, 0);
+  bodyGrad.addColorStop(0, '#18181b'); // Dark edge
+  bodyGrad.addColorStop(0.3, '#3f3f46'); // Metallic highlight
+  bodyGrad.addColorStop(0.7, '#27272a'); // Mid tone
+  bodyGrad.addColorStop(1, '#09090b'); // Shadow
+  
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(x - hopperTopW/2, topY);
+  ctx.lineTo(x + hopperTopW/2, topY);
+  ctx.lineTo(x + hopperBotW/2, y);
+  ctx.lineTo(x - hopperBotW/2, y);
   ctx.closePath();
+  ctx.fill();
+  
+  // 3. Metallic Rim (Top)
+  ctx.fillStyle = '#71717a';
+  ctx.beginPath();
+  ctx.ellipse(x, topY, hopperTopW/2, 15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Inner dark hole
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.ellipse(x, topY, hopperTopW/2 - 6, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // 4. Glass/Window Level Indicator (Centro)
+  const windowW = 20;
+  const windowTopW = 50;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.beginPath();
+  ctx.moveTo(x - windowTopW/2, topY + 20);
+  ctx.lineTo(x + windowTopW/2, topY + 20);
+  ctx.lineTo(x + windowW/2, y - 15);
+  ctx.lineTo(x - windowW/2, y - 15);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Material Level inside window (Glowing Neon)
+  const fillLvl = 0.6; 
+  const fillTopY = y - 15 - ((hopperH - 35) * fillLvl);
+  const fillTopW = windowW + ((windowTopW - windowW) * fillLvl);
+  
+  const levelGrad = ctx.createLinearGradient(0, fillTopY, 0, y - 15);
+  levelGrad.addColorStop(0, 'rgba(168, 85, 247, 0.8)'); // Neon Purple
+  levelGrad.addColorStop(1, 'rgba(168, 85, 247, 0.2)');
+  
+  ctx.fillStyle = levelGrad;
+  ctx.beginPath();
+  ctx.moveTo(x - fillTopW/2, fillTopY);
+  ctx.lineTo(x + fillTopW/2, fillTopY);
+  ctx.lineTo(x + windowW/2, y - 15);
+  ctx.lineTo(x - windowW/2, y - 15);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Window grid/lines
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x - windowTopW/2, topY + 40); ctx.lineTo(x + windowTopW/2, topY + 40);
+  ctx.moveTo(x - windowTopW/2 + 5, topY + 60); ctx.lineTo(x + windowTopW/2 - 5, topY + 60);
+  ctx.stroke();
+
+  // 5. Discharge Gate Assembly (Bottom)
+  ctx.shadowBlur = 0;
+  const gateY = y;
+  
+  // Flange
+  ctx.fillStyle = '#52525b'; // Zinc
+  ctx.fillRect(x - 25, gateY, 50, 8);
+  
+  // Animated Valve / Gate
+  ctx.fillStyle = openPercent > 10 ? '#22c55e' : '#ef4444'; // Green if open, Red if closed
+  ctx.fillRect(x - 20, gateY + 10, 40 * (openPercent / 100), 4);
+  ctx.shadowBlur = openPercent > 10 ? 10 : 0;
+  ctx.shadowColor = ctx.fillStyle;
+  ctx.fillRect(x - 20, gateY + 10, 40 * (openPercent / 100), 4);
+  ctx.shadowBlur = 0;
+  
+  // Valve body
+  ctx.fillStyle = '#27272a';
+  ctx.fillRect(x - 22, gateY + 8, 44, 12);
+  
+  // 6. Holographic Text Label
+  ctx.fillStyle = '#d8b4fe';
+  ctx.font = 'bold 14px "JetBrains Mono"';
+  ctx.textAlign = 'center';
+  ctx.shadowBlur = 5;
+  ctx.shadowColor = '#a855f7';
+  ctx.fillText('SILO PRINCIPAL', x, topY - 25);
+  
+  ctx.shadowBlur = 0;
+}
+
+function drawMaterialParticle(ctx, x, y, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  
+  // Outer glow
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = color;
+  
+  // Sphere base
+  ctx.beginPath();
+  ctx.arc(0, 0, 5, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  
+  // Inner highlight (3D effect)
+  ctx.shadowBlur = 0;
+  const highlight = ctx.createRadialGradient(-2, -2, 0, 0, 0, 5);
+  highlight.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+  highlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = highlight;
+  ctx.beginPath();
+  ctx.arc(0, 0, 5, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.restore();
+}
+
+function drawLimitSwitch(ctx, x, y, isActive, label) {
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(x - 15, y - 10, 30, 20);
+  ctx.strokeStyle = isActive ? '#00f0ff' : '#4b5563';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x - 15, y - 10, 30, 20);
+  
+  ctx.fillStyle = isActive ? '#00f0ff' : '#374151';
+  ctx.shadowBlur = isActive ? 10 : 0;
+  ctx.shadowColor = '#00f0ff';
+  ctx.beginPath();
+  ctx.arc(x, y, 5, 0, Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = '10px "Share Tech Mono"';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x, y - 15);
 }
 
 function drawConveyorSystem(canvas, state) {
@@ -1334,657 +2316,127 @@ function drawConveyorSystem(canvas, state) {
   const W = canvas.width;
   const H = canvas.height;
   
-  // === FONDO INDUSTRIAL PREMIUM ===
-  // Gradiente oscuro profundo
-  const bgGrad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, W * 0.7);
-  bgGrad.addColorStop(0, '#1a1a2e');
-  bgGrad.addColorStop(1, '#0a0a14');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, W, H);
+  // Background gradient is now handled by CSS or subtle canvas clear
+  ctx.clearRect(0, 0, W, H);
   
-  // Rejilla de fondo premium (puntos en lugar de líneas)
-  const gridSize = 30;
-  ctx.fillStyle = 'rgba(100, 120, 180, 0.08)';
-  for (let x = gridSize; x < W; x += gridSize) {
-    for (let y = gridSize; y < H; y += gridSize) {
-      ctx.beginPath();
-      ctx.arc(x, y, 1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  
-  // Líneas de guía sutiles (ejes principales)
-  ctx.strokeStyle = 'rgba(100, 120, 180, 0.06)';
+  // Draw floor grid for industrial look
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
   ctx.lineWidth = 1;
-  ctx.setLineDash([4, 8]);
-  ctx.beginPath();
-  ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H);
-  ctx.moveTo(0, H / 2 + 50); ctx.lineTo(W, H / 2 + 50);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  
+  for(let i=0; i<W; i+=50) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, H); ctx.stroke();
+  }
+  for(let i=0; i<H; i+=50) {
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke();
+  }
+
   const centerX = W / 2;
-  const centerY = H / 2 + 50;
+  const centerY = H / 2;
   
-  // === 1. CINTAS DE DESTINO (C1, C2, C3) ===
-  const beltLength = 170;
-  const beltThickness = 28;
-  
-  // Cinta 1 (Izquierda)
-  drawPremiumBelt(ctx, centerX - beltLength - 65, centerY - beltThickness / 2, beltLength, beltThickness, 'LEFT', state.outputs.MC1, state, 'C1');
-  
-  // Cinta 3 (Derecha)
-  drawPremiumBelt(ctx, centerX + 65, centerY - beltThickness / 2, beltLength, beltThickness, 'RIGHT', state.outputs.MC3, state, 'C3');
-  
-  // Cinta 2 (Abajo)
-  drawPremiumBelt(ctx, centerX - beltThickness / 2, centerY + 65, beltThickness, beltLength, 'DOWN', state.outputs.MC2, state, 'C2');
-  
-  // === 2. PLATAFORMA GIRATORIA (MG) — Efecto 3D ===
+  // Central Turntable (Plataforma Giratoria)
   ctx.save();
   ctx.translate(centerX, centerY);
   
-  // Sombra exterior
-  ctx.beginPath();
-  ctx.arc(0, 5, 78, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fill();
-  
-  // Anillo exterior metálico
-  const outerRingGrad = ctx.createRadialGradient(0, 0, 60, 0, 0, 82);
-  outerRingGrad.addColorStop(0, '#3a3a50');
-  outerRingGrad.addColorStop(0.5, '#52526e');
-  outerRingGrad.addColorStop(1, '#2a2a3e');
-  ctx.beginPath();
-  ctx.arc(0, 0, 80, 0, Math.PI * 2);
-  ctx.fillStyle = outerRingGrad;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  
-  // Base de la plataforma (gradiente metálico)
-  const platformGrad = ctx.createRadialGradient(-15, -15, 0, 0, 0, 70);
-  platformGrad.addColorStop(0, '#5a5a7a');
-  platformGrad.addColorStop(0.5, '#3e3e58');
-  platformGrad.addColorStop(1, '#2a2a42');
-  ctx.beginPath();
-  ctx.arc(0, 0, 70, 0, Math.PI * 2);
-  ctx.fillStyle = platformGrad;
-  ctx.fill();
-  
-  // Borde interior iluminado
-  ctx.beginPath();
-  ctx.arc(0, 0, 70, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  // Turntable base
+  ctx.fillStyle = '#1e293b';
+  ctx.beginPath(); ctx.arc(0, 0, 160, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#00f0ff';
   ctx.lineWidth = 2;
-  ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 160, 0, Math.PI*2); ctx.stroke();
   
-  // Anillo de tornillos decorativos
-  for (let i = 0; i < 12; i++) {
-    const angle = (i / 12) * Math.PI * 2;
-    const bx = Math.cos(angle) * 74;
-    const by = Math.sin(angle) * 74;
-    ctx.beginPath();
-    ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#6a6a88';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-  }
+  // Turntable rotation
+  const aRad = (state.physical.currentAngle * Math.PI) / 180;
+  ctx.rotate(aRad);
   
-  // Anillo dentado animado
-  const gearAnimAngle = (Date.now() / 2000) * Math.PI * 2;
+  // Cinta 0 (mounted on turntable)
+  // Drawn horizontally on the turntable, but center of rotation is at the start of Cinta 0
+  ctx.translate(0, 0); // Origin is center of turntable
+  // Wait, in previous logic Cinta 0 extends outward from center.
+  // Actually, Cinta 0 should bring material FROM hopper TO center.
+  // Let's place Hopper at top, Cinta 0 brings it to center. Turntable directs to C1, C2, C3.
+  // Original logic: Hopper -> Cinta 0 -> (Angle) -> C1, C2, C3.
+  ctx.restore();
+
+  // Let's adjust positions:
+  const hopperX = centerX;
+  const hopperY = centerY - 300;
+  const beltLength = 200;
+  const beltWidth = 60;
+  
+  // CINTA 0 (Hopper to Center)
+  drawIsometricBelt(ctx, centerX, centerY - 150, beltWidth, beltLength, 0, state.outputs.MC0, 'CINTA 0 (ALIMENTACIÓN)');
+  
+  // TURNTABLE (At Center)
   ctx.save();
-  ctx.rotate(state.outputs.MG ? gearAnimAngle : 0);
-  ctx.beginPath();
-  ctx.arc(0, 0, 67, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(160, 170, 200, 0.15)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([3, 6]);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
-  
-  // LED de estado del motor MG (centro)
-  const mgLedColor = state.outputs.MG ? '#10b981' : '#f43f5e';
-  ctx.beginPath();
-  ctx.arc(0, 0, 6, 0, Math.PI * 2);
-  const ledGrad = ctx.createRadialGradient(0, -2, 0, 0, 0, 6);
-  ledGrad.addColorStop(0, state.outputs.MG ? '#6ee7b7' : '#fda4af');
-  ledGrad.addColorStop(1, mgLedColor);
-  ctx.fillStyle = ledGrad;
-  ctx.fill();
-  // Resplandor del LED
-  if (state.outputs.MG) {
-    ctx.beginPath();
-    ctx.arc(0, 0, 12, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
-    ctx.fill();
-  }
-  
-  // Rotar para Cinta 0
-  const angleRad = (state.physical.currentAngle * Math.PI) / 180;
-  ctx.rotate(angleRad);
-  
-  // Cinta 0 sobre la plataforma
-  const c0Length = 115;
-  const c0Thick = 22;
-  
-  // Sombra de la cinta
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-  ctx.fillRect(-c0Length / 2 + 2, -c0Thick / 2 + 2, c0Length, c0Thick);
-  
-  // Cuerpo de la cinta con gradiente metálico
-  const c0Grad = createMetalGradient(ctx, 0, -c0Thick / 2, c0Length, c0Thick, '#2a2a42', '#3e3e58');
-  ctx.fillStyle = c0Grad;
-  ctx.fillRect(-c0Length / 2, -c0Thick / 2, c0Length, c0Thick);
-  
-  // Borde de la cinta (color según estado)
-  const c0BorderColor = state.outputs.MC0 ? '#10b981' : '#f43f5e';
-  ctx.strokeStyle = c0BorderColor;
-  ctx.lineWidth = 2.5;
-  ctx.strokeRect(-c0Length / 2, -c0Thick / 2, c0Length, c0Thick);
-  
-  // Resplandor sutil de la cinta si activa
-  if (state.outputs.MC0) {
-    ctx.shadowColor = '#10b981';
-    ctx.shadowBlur = 8;
-    ctx.strokeRect(-c0Length / 2, -c0Thick / 2, c0Length, c0Thick);
-    ctx.shadowBlur = 0;
-  }
-  
-  // Rodillos metálicos 3D
-  [-c0Length / 2 + 12, c0Length / 2 - 12].forEach(rx => {
-    const rollerGrad = ctx.createRadialGradient(rx - 2, -2, 0, rx, 0, 9);
-    rollerGrad.addColorStop(0, '#8888aa');
-    rollerGrad.addColorStop(1, '#2a2a42');
-    ctx.beginPath();
-    ctx.arc(rx, 0, 9, 0, Math.PI * 2);
-    ctx.fillStyle = rollerGrad;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    // Eje del rodillo
-    ctx.beginPath();
-    ctx.arc(rx, 0, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fill();
-  });
-  
-  // Patrón animado de banda rodante
-  if (state.outputs.MC0 && state.control.status !== 'ALARM') {
-    const shift = (Date.now() / 6) % 15;
-    ctx.strokeStyle = 'rgba(150, 160, 200, 0.25)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let lx = -c0Length / 2 + 18 + shift; lx < c0Length / 2 - 18; lx += 15) {
-      ctx.moveTo(lx, -c0Thick / 2 + 1);
-      ctx.lineTo(lx - 4, c0Thick / 2 - 1);
-    }
-    ctx.stroke();
-  }
-  
-  // Flecha de dirección de flujo
-  ctx.fillStyle = 'rgba(150, 170, 220, 0.5)';
-  ctx.beginPath();
-  ctx.moveTo(18, -5);
-  ctx.lineTo(30, 0);
-  ctx.lineTo(18, 5);
-  ctx.fill();
-  
-  ctx.restore();
-  
-  // === 3. FINALES DE CARRERA (FC1, FC2, FC3) ===
-  drawPremiumLimitSwitch(ctx, centerX - 85, centerY, 'FC1', state.inputs.FC1);
-  drawPremiumLimitSwitch(ctx, centerX, centerY + 85, 'FC2', state.inputs.FC2);
-  drawPremiumLimitSwitch(ctx, centerX + 85, centerY, 'FC3', state.inputs.FC3);
-  
-  // === 4. TOLVA DE ALIMENTACIÓN — Efecto 3D Premium ===
-  const hopperTopY = 20;
-  const hopperHeight = 90;
-  const hopperWidthTop = 150;
-  const hopperWidthBot = 45;
-  
-  // Sombra de la tolva
-  ctx.beginPath();
-  ctx.moveTo(centerX - hopperWidthTop / 2 + 4, hopperTopY + 4);
-  ctx.lineTo(centerX + hopperWidthTop / 2 + 4, hopperTopY + 4);
-  ctx.lineTo(centerX + hopperWidthBot / 2 + 4, hopperTopY + hopperHeight + 4);
-  ctx.lineTo(centerX - hopperWidthBot / 2 + 4, hopperTopY + hopperHeight + 4);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-  ctx.fill();
-  
-  // Cuerpo de la tolva con gradiente metálico
-  ctx.beginPath();
-  ctx.moveTo(centerX - hopperWidthTop / 2, hopperTopY);
-  ctx.lineTo(centerX + hopperWidthTop / 2, hopperTopY);
-  ctx.lineTo(centerX + hopperWidthBot / 2, hopperTopY + hopperHeight);
-  ctx.lineTo(centerX - hopperWidthBot / 2, hopperTopY + hopperHeight);
-  ctx.closePath();
-  
-  const hopperGrad = ctx.createLinearGradient(centerX - hopperWidthTop / 2, hopperTopY, centerX + hopperWidthTop / 2, hopperTopY);
-  hopperGrad.addColorStop(0, '#7c4a1e');
-  hopperGrad.addColorStop(0.2, '#c2711e');
-  hopperGrad.addColorStop(0.5, '#e8922a');
-  hopperGrad.addColorStop(0.8, '#c2711e');
-  hopperGrad.addColorStop(1, '#7c4a1e');
-  ctx.fillStyle = hopperGrad;
-  ctx.fill();
-  
-  // Borde de la tolva
-  ctx.strokeStyle = '#5c3310';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  
-  // Reflejo superior (brillo metálico)
-  ctx.beginPath();
-  ctx.moveTo(centerX - hopperWidthTop / 2 + 10, hopperTopY + 3);
-  ctx.lineTo(centerX + hopperWidthTop / 2 - 10, hopperTopY + 3);
-  ctx.strokeStyle = 'rgba(255, 200, 120, 0.3)';
+  ctx.translate(centerX, centerY);
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath(); ctx.arc(0, 0, 80, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#00f0ff';
   ctx.lineWidth = 2;
-  ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 80, 0, Math.PI*2); ctx.stroke();
   
-  // Remaches decorativos en la tolva
-  const remachePositions = [
-    [centerX - hopperWidthTop / 2 + 12, hopperTopY + 10],
-    [centerX + hopperWidthTop / 2 - 12, hopperTopY + 10],
-    [centerX - hopperWidthTop / 2 + 20, hopperTopY + 25],
-    [centerX + hopperWidthTop / 2 - 20, hopperTopY + 25],
-    [centerX - 30, hopperTopY + hopperHeight - 8],
-    [centerX + 30, hopperTopY + hopperHeight - 8],
-  ];
-  remachePositions.forEach(([rx, ry]) => {
-    ctx.beginPath();
-    ctx.arc(rx, ry, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#8a5a28';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    // Brillo del remache
-    ctx.beginPath();
-    ctx.arc(rx - 0.8, ry - 0.8, 1, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 220, 150, 0.4)';
-    ctx.fill();
-  });
-  
-  // Material dentro de la tolva
-  if (state.physical.hopperOpenPercent < 100 || state.control.status !== 'IDLE') {
-    ctx.beginPath();
-    ctx.moveTo(centerX - 55, hopperTopY + 28);
-    ctx.lineTo(centerX + 55, hopperTopY + 28);
-    ctx.lineTo(centerX + hopperWidthBot / 2 - 2, hopperTopY + hopperHeight - 2);
-    ctx.lineTo(centerX - hopperWidthBot / 2 + 2, hopperTopY + hopperHeight - 2);
-    ctx.closePath();
-    const matGrad = ctx.createLinearGradient(centerX, hopperTopY + 28, centerX, hopperTopY + hopperHeight);
-    matGrad.addColorStop(0, '#a0522d');
-    matGrad.addColorStop(0.5, '#8b4513');
-    matGrad.addColorStop(1, '#6b3410');
-    ctx.fillStyle = matGrad;
-    ctx.fill();
-  }
-  
-  // Compuerta de la tolva (deslizante metálica)
-  const gateOpenOffset = (state.physical.hopperOpenPercent / 100) * 28;
-  const gateX = centerX - 22 + gateOpenOffset;
-  const gateY = hopperTopY + hopperHeight;
-  const gateGrad = createMetalGradient(ctx, gateX, gateY, 44, 8, '#4a4a60', '#6a6a80');
-  ctx.fillStyle = gateGrad;
-  ctx.fillRect(gateX, gateY, 44, 8);
-  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(gateX, gateY, 44, 8);
-  
-  // FCTolCe y FCTolAb
-  drawPremiumLimitSwitch(ctx, centerX - 40, hopperTopY + hopperHeight + 4, 'FCTolCe', state.inputs.FCTolCe);
-  drawPremiumLimitSwitch(ctx, centerX + 30, hopperTopY + hopperHeight + 4, 'FCTolAb', state.inputs.FCTolAb);
-  
-  // Caída de material (partículas animadas realistas)
-  if (state.physical.hopperOpenPercent > 10 && state.outputs.MC0) {
-    const time = Date.now();
-    for (let i = 0; i < 8; i++) {
-      const seed = (time / 50 + i * 137) % 1000;
-      const px = centerX - 8 + (Math.sin(seed) * 0.5 + 0.5) * 16;
-      const py = hopperTopY + hopperHeight + 8 + ((seed % 100) / 100) * (centerY - (hopperTopY + hopperHeight) - 25);
-      const size = 2 + (Math.sin(seed * 3.7) * 0.5 + 0.5) * 4;
-      
-      const particleGrad = ctx.createRadialGradient(px - 1, py - 1, 0, px, py, size);
-      particleGrad.addColorStop(0, '#f97316');
-      particleGrad.addColorStop(1, '#c2410c');
-      ctx.beginPath();
-      ctx.arc(px, py, size, 0, Math.PI * 2);
-      ctx.fillStyle = particleGrad;
-      ctx.fill();
-    }
-  }
-  
-  // === 5. PARTÍCULAS DE MATERIAL EN CINTAS ===
-  // Partículas en Cinta 0
+  // Arrow showing rotation direction
+  ctx.rotate(aRad);
+  ctx.fillStyle = 'rgba(0, 240, 255, 0.2)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(-20, 70); ctx.lineTo(20, 70); ctx.fill();
+  ctx.restore();
+
+  // DESTINATION BELTS (C1, C2, C3)
+  // Pos 1 = 0 deg (Down), Pos 2 = 90 deg (Right), Pos 3 = 180 deg (Up/Left? Wait, previous logic was Left, Right, Down)
+  // Let's draw them radially from center.
+  // C1 (Left)
+  drawIsometricBelt(ctx, centerX - 180, centerY, beltWidth, beltLength, Math.PI/2, state.outputs.MC1, 'CINTA 1');
+  // C3 (Right)
+  drawIsometricBelt(ctx, centerX + 180, centerY, beltWidth, beltLength, -Math.PI/2, state.outputs.MC3, 'CINTA 3');
+  // C2 (Down)
+  drawIsometricBelt(ctx, centerX, centerY + 180, beltWidth, beltLength, 0, state.outputs.MC2, 'CINTA 2');
+
+  // HOPPER
+  draw3DHopper(ctx, hopperX, hopperY, state.physical.hopperOpenPercent, state.outputs.MTolAb || state.outputs.MTolCe);
+
+  // MATERIAL PARTICLES
+  // Cinta 0
   state.physical.materialOnCinta0.forEach(p => {
-    const c0Len = 115;
-    const startX = -c0Len / 2 + 12;
-    const endX = c0Len / 2 - 12;
-    const relX = startX + p.x * (endX - startX);
-    
-    const aRad = (state.physical.currentAngle * Math.PI) / 180;
-    const px = centerX + relX * Math.cos(aRad) - p.y * Math.sin(aRad);
-    const py = centerY + relX * Math.sin(aRad) + p.y * Math.cos(aRad);
-    
-    const matParticle = ctx.createRadialGradient(px - 1, py - 1, 0, px, py, 7);
-    matParticle.addColorStop(0, '#fb923c');
-    matParticle.addColorStop(1, '#c2410c');
-    ctx.beginPath();
-    ctx.arc(px, py, 7, 0, Math.PI * 2);
-    ctx.fillStyle = matParticle;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(120, 50, 10, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    // p.x goes from 0 to 1. 0 is at hopper, 1 is at center.
+    const px = centerX + (p.y - 15) * 2; // slight scatter
+    const py = (centerY - 250) + p.x * beltLength;
+    drawMaterialParticle(ctx, px, py, '#f59e0b');
   });
   
-  // Partículas en Cintas de Destino
+  // Destination Belts
   state.physical.materialOnDest.forEach(p => {
-    let px = 0, py = 0;
-    
-    if (p.cinta === 1) {
-      px = (centerX - 65) - p.x * beltLength;
+    let px = centerX, py = centerY;
+    // p.x goes from 0 to 1 (center to edge)
+    if (p.cinta === 1) { // Left
+      px = (centerX - 80) - p.x * beltLength;
       py = centerY + (p.y - 15);
-    } else if (p.cinta === 3) {
-      px = (centerX + 65) + p.x * beltLength;
+    } else if (p.cinta === 3) { // Right
+      px = (centerX + 80) + p.x * beltLength;
       py = centerY + (p.y - 15);
-    } else if (p.cinta === 2) {
+    } else if (p.cinta === 2) { // Down
       px = centerX + (p.y - 15);
-      py = (centerY + 65) + p.x * beltLength;
+      py = (centerY + 80) + p.x * beltLength;
     }
-    
-    const matParticle = ctx.createRadialGradient(px - 1, py - 1, 0, px, py, 7);
-    matParticle.addColorStop(0, '#fdba74');
-    matParticle.addColorStop(1, '#ea580c');
-    ctx.beginPath();
-    ctx.arc(px, py, 7, 0, Math.PI * 2);
-    ctx.fillStyle = matParticle;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(150, 60, 10, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    drawMaterialParticle(ctx, px, py, '#10b981');
   });
+
+  // LIMIT SWITCHES
+  drawLimitSwitch(ctx, centerX, centerY + 100, state.inputs.FC1, 'FC1 (POS 1)');
+  drawLimitSwitch(ctx, centerX + 100, centerY, state.inputs.FC2, 'FC2 (POS 2)');
+  drawLimitSwitch(ctx, centerX - 100, centerY, state.inputs.FC3, 'FC3 (POS 3)');
   
-  // === 6. SENSORES DE VELOCIDAD (VIGILANCIA) ===
-  drawPremiumSpeedSensor(ctx, centerX, centerY - 28, 'VigC0', state.inputs.VigC0, state.outputs.MC0);
-  drawPremiumSpeedSensor(ctx, centerX - 150, centerY - 32, 'VigC1', state.inputs.VigC1, state.outputs.MC1);
-  drawPremiumSpeedSensor(ctx, centerX + 150, centerY - 32, 'VigC3', state.inputs.VigC3, state.outputs.MC3);
-  drawPremiumSpeedSensor(ctx, centerX - 32, centerY + 150, 'VigC2', state.inputs.VigC2, state.outputs.MC2);
-  
-  // === 7. ETIQUETAS DE LAS CINTAS ===
-  ctx.font = 'bold 11px "Space Grotesk", monospace';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(150, 170, 220, 0.6)';
-  ctx.fillText('← C1', centerX - beltLength / 2 - 65, centerY - 22);
-  ctx.fillText('C3 →', centerX + beltLength / 2 + 65, centerY - 22);
-  ctx.fillText('C2 ↓', centerX + 28, centerY + beltLength / 2 + 85);
-  ctx.fillText('TOLVA', centerX, hopperTopY - 6);
-  
-  // === 8. ALERTA DE CIBERSEGURIDAD ===
+  // LOCKDOWN ALERTS
   if (state.control.securityLockdown) {
-    // Fondo de alerta con gradiente
-    const alertGrad = ctx.createLinearGradient(0, 0, 0, H);
-    alertGrad.addColorStop(0, 'rgba(244, 63, 94, 0.92)');
-    alertGrad.addColorStop(1, 'rgba(180, 30, 50, 0.92)');
-    ctx.fillStyle = alertGrad;
-    ctx.fillRect(10, 10, W - 20, H - 20);
-    
-    // Icono y texto
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 26px "Outfit", sans-serif';
+    ctx.fillStyle = 'rgba(255, 0, 51, 0.2)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ff0033';
+    ctx.font = 'bold 36px "Share Tech Mono"';
     ctx.textAlign = 'center';
-    ctx.fillText('🚨 ALERTA DE SEGURIDAD INDUSTRIAL OT 🚨', W / 2, H / 2 - 45);
-    
-    ctx.font = '600 16px "Inter", monospace';
-    ctx.fillText('PLC LOCKDOWN ACTIVO — Comando Rechazado', W / 2, H / 2);
-    
-    ctx.font = '14px "Inter", monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.fillText(`Causa: ${state.control.securityLockReason}`, W / 2, H / 2 + 28);
-    ctx.fillText('Desbloqueo requerido por Supervisor', W / 2, H / 2 + 52);
-  }
-  
-  // === 9. BARRA DE ESTADO INFERIOR ===
-  const barY = H - 32;
-  ctx.fillStyle = 'rgba(10, 10, 20, 0.7)';
-  ctx.fillRect(0, barY, W, 32);
-  ctx.strokeStyle = 'rgba(100, 120, 180, 0.15)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, barY); ctx.lineTo(W, barY);
-  ctx.stroke();
-  
-  ctx.font = '11px "Inter", sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(160, 175, 210, 0.7)';
-  ctx.fillText(`Física: 4 Cintas, Plataforma Giratoria y Tolva de Alimentación`, 16, barY + 20);
-  ctx.textAlign = 'right';
-  ctx.fillText(`Modo: Simulación de Planta Ciberfísica ${Math.round(1000/20)} FPS`, W - 16, barY + 20);
-  
-  // LED de estado del sistema en la barra
-  const sysLedColor = state.control.status === 'ALARM' ? '#f43f5e' : 
-                       state.control.status === 'RUNNING' ? '#10b981' : '#f59e0b';
-  ctx.beginPath();
-  ctx.arc(W / 2, barY + 16, 4, 0, Math.PI * 2);
-  ctx.fillStyle = sysLedColor;
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(W / 2, barY + 16, 8, 0, Math.PI * 2);
-  ctx.fillStyle = sysLedColor.replace(')', ', 0.2)').replace('rgb', 'rgba');
-  ctx.fill();
-  
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(200, 210, 240, 0.6)';
-  ctx.font = '10px "Inter", sans-serif';
-  ctx.fillText(state.control.status, W / 2 + 16, barY + 20);
-}
-
-// === CINTA TRANSPORTADORA PREMIUM ===
-function drawPremiumBelt(ctx, x, y, w, h, dir, isRunning, state, label) {
-  const isHorizontal = (dir === 'LEFT' || dir === 'RIGHT');
-  
-  // Sombra
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-  if (isHorizontal) {
-    ctx.fillRect(x + 3, y + 3, w, h);
-  } else {
-    ctx.fillRect(x + 3, y + 3, w, h);
-  }
-  
-  // Cuerpo de la cinta (gradiente metálico)
-  const beltGrad = isHorizontal 
-    ? createMetalGradient(ctx, x, y, w, h, '#1a1a2e', '#2a2a42')
-    : ctx.createLinearGradient(x, y, x + w, y);
-  if (!isHorizontal) {
-    beltGrad.addColorStop(0, '#2a2a42');
-    beltGrad.addColorStop(0.3, '#1a1a2e');
-    beltGrad.addColorStop(0.7, '#1a1a2e');
-    beltGrad.addColorStop(1, '#2a2a42');
-  }
-  ctx.fillStyle = beltGrad;
-  ctx.fillRect(x, y, w, h);
-  
-  // Borde con color de estado
-  const borderColor = isRunning ? '#10b981' : '#4a4a60';
-  ctx.strokeStyle = borderColor;
-  ctx.lineWidth = 2.5;
-  ctx.strokeRect(x, y, w, h);
-  
-  // Resplandor si activa
-  if (isRunning) {
-    ctx.shadowColor = '#10b981';
-    ctx.shadowBlur = 6;
-    ctx.strokeRect(x, y, w, h);
-    ctx.shadowBlur = 0;
-  }
-  
-  // Rodillos metálicos 3D
-  ctx.save();
-  if (isHorizontal) {
-    [x + 12, x + w - 12].forEach(rx => {
-      const rollerGrad = ctx.createRadialGradient(rx - 2, y + h / 2 - 2, 0, rx, y + h / 2, 9);
-      rollerGrad.addColorStop(0, '#7a7a9a');
-      rollerGrad.addColorStop(1, '#2a2a42');
-      ctx.beginPath();
-      ctx.arc(rx, y + h / 2, 9, 0, Math.PI * 2);
-      ctx.fillStyle = rollerGrad;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(rx, y + h / 2, 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fill();
-    });
-  } else {
-    [y + 12, y + h - 12].forEach(ry => {
-      const rollerGrad = ctx.createRadialGradient(x + w / 2 - 2, ry - 2, 0, x + w / 2, ry, 9);
-      rollerGrad.addColorStop(0, '#7a7a9a');
-      rollerGrad.addColorStop(1, '#2a2a42');
-      ctx.beginPath();
-      ctx.arc(x + w / 2, ry, 9, 0, Math.PI * 2);
-      ctx.fillStyle = rollerGrad;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(x + w / 2, ry, 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fill();
-    });
-  }
-  ctx.restore();
-  
-  // Patrón animado de bandas
-  if (isRunning && state.control.status !== 'ALARM') {
-    const shift = (Date.now() / 5) % 15;
-    ctx.strokeStyle = 'rgba(150, 160, 200, 0.2)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    
-    if (dir === 'LEFT') {
-      for (let lx = x + w - 18 - shift; lx > x + 18; lx -= 15) {
-        ctx.moveTo(lx, y + 1);
-        ctx.lineTo(lx - 4, y + h - 1);
-      }
-    } else if (dir === 'RIGHT') {
-      for (let lx = x + 18 + shift; lx < x + w - 18; lx += 15) {
-        ctx.moveTo(lx, y + 1);
-        ctx.lineTo(lx - 4, y + h - 1);
-      }
-    } else if (dir === 'DOWN') {
-      for (let ly = y + 18 + shift; ly < y + h - 18; ly += 15) {
-        ctx.moveTo(x + 1, ly);
-        ctx.lineTo(x + w - 1, ly - 4);
-      }
-    }
-    ctx.stroke();
-  }
-  
-  // Etiqueta de la cinta
-  ctx.font = 'bold 10px "Space Grotesk", monospace';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = isRunning ? 'rgba(16, 185, 129, 0.8)' : 'rgba(160, 170, 200, 0.4)';
-  if (isHorizontal) {
-    ctx.fillText(label, x + w / 2, y - 6);
-  } else {
-    ctx.fillText(label, x - 14, y + h / 2 + 4);
+    ctx.fillText('🚨 LOCKDOWN ACTIVO 🚨', W/2, H/2 - 50);
+    ctx.font = '20px "Share Tech Mono"';
+    ctx.fillText(state.control.securityLockReason, W/2, H/2);
   }
 }
-
-// === FINAL DE CARRERA PREMIUM ===
-function drawPremiumLimitSwitch(ctx, x, y, name, isActive) {
-  // Carcasa del switch con gradiente
-  drawRoundedRect(ctx, x - 8, y - 8, 16, 16, 3);
-  const swGrad = createMetalGradient(ctx, x - 8, y - 8, 16, 16, '#2a2a42', '#3e3e58');
-  ctx.fillStyle = swGrad;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  
-  // LED del switch con resplandor
-  ctx.beginPath();
-  ctx.arc(x, y, 4, 0, Math.PI * 2);
-  const swLedColor = isActive ? '#10b981' : '#4a4a60';
-  const swLedGrad = ctx.createRadialGradient(x - 1, y - 1, 0, x, y, 4);
-  swLedGrad.addColorStop(0, isActive ? '#6ee7b7' : '#5a5a70');
-  swLedGrad.addColorStop(1, swLedColor);
-  ctx.fillStyle = swLedGrad;
-  ctx.fill();
-  
-  // Resplandor exterior
-  if (isActive) {
-    ctx.beginPath();
-    ctx.arc(x, y, 8, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
-    ctx.fill();
-  }
-  
-  // Etiqueta
-  ctx.fillStyle = isActive ? 'rgba(110, 231, 183, 0.9)' : 'rgba(160, 170, 200, 0.5)';
-  ctx.font = '8px "Space Grotesk", monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(name, x, y - 12);
-}
-
-// === SENSOR DE VELOCIDAD PREMIUM ===
-function drawPremiumSpeedSensor(ctx, x, y, name, isOk, motorRunning) {
-  // Carcasa con efecto 3D
-  drawRoundedRect(ctx, x - 22, y - 12, 44, 20, 4);
-  const sGrad = createMetalGradient(ctx, x - 22, y - 12, 44, 20, '#1a1a2e', '#2e2e48');
-  ctx.fillStyle = sGrad;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  
-  // LED de estado con resplandor
-  let ledColor, ledHighlight;
-  if (!isOk) {
-    ledColor = '#f43f5e';
-    ledHighlight = '#fda4af';
-  } else if (motorRunning) {
-    const pulse = Math.floor(Date.now() / 100) % 2 === 0;
-    ledColor = pulse ? '#10b981' : '#047857';
-    ledHighlight = pulse ? '#6ee7b7' : '#34d399';
-  } else {
-    ledColor = '#4a4a60';
-    ledHighlight = '#6a6a80';
-  }
-  
-  ctx.beginPath();
-  ctx.arc(x - 10, y - 2, 5, 0, Math.PI * 2);
-  const sLedGrad = ctx.createRadialGradient(x - 11, y - 3, 0, x - 10, y - 2, 5);
-  sLedGrad.addColorStop(0, ledHighlight);
-  sLedGrad.addColorStop(1, ledColor);
-  ctx.fillStyle = sLedGrad;
-  ctx.fill();
-  
-  // Resplandor exterior del LED
-  if (motorRunning && isOk) {
-    ctx.beginPath();
-    ctx.arc(x - 10, y - 2, 9, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
-    ctx.fill();
-  }
-  
-  // Nombre del sensor
-  ctx.fillStyle = '#c0c8e0';
-  ctx.font = 'bold 8px "Space Grotesk", monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText(name.slice(3), x + 1, y + 2);
-}
-
 
 
 /* === js/app.js === */
@@ -2014,10 +2466,17 @@ function updateUI(state) {
   }
   
   // Actualizar indicadores digitales y analógicos en la pantalla
-  document.getElementById('state-display').innerText = state.control.status;
-  document.getElementById('cinta0-angle').innerText = state.physical.currentAngle.toFixed(0) + '°';
-  document.getElementById('hopper-percent').innerText = state.physical.hopperOpenPercent.toFixed(0) + '%';
-  document.getElementById('active-pos-lbl').innerText = `Posición ${state.physical.targetPosition}`;
+  const elStatus = document.getElementById('state-display');
+  if (elStatus) elStatus.innerText = state.control.status;
+  
+  const elAngle = document.getElementById('cinta0-angle');
+  if (elAngle) elAngle.innerText = state.physical.currentAngle.toFixed(0);
+  
+  const elHopper = document.getElementById('hopper-percent');
+  if (elHopper) elHopper.innerText = state.physical.hopperOpenPercent.toFixed(0) + '%';
+  
+  const elPos = document.getElementById('active-pos-lbl');
+  if (elPos) elPos.innerText = `Posición ${state.physical.targetPosition}`;
   
   // Actualizar luces indicadoras LED en el panel
   updateLed('led-ls1', state.outputs.LS1, 'yellow');
@@ -2046,20 +2505,24 @@ function updateUI(state) {
         const id = key === 'C0' ? 0 : parseInt(key[1]);
         const ledEl = document.getElementById(`led-ldes-c${id}`);
         if (ledEl) {
-          ledEl.className = isLit ? 'led-indicator led-red' : 'led-indicator led-off';
+          ledEl.className = isLit ? 'status-led led-red' : 'status-led led-off';
         }
       }
     }
   }
 
-  // Actualizar KPIs y reportes
-  document.getElementById('kpi-runtime').innerText = formatTime(state.physical.runTimeSeconds);
-  document.getElementById('kpi-batches').innerText = state.physical.batchesProcessed;
-  document.getElementById('kpi-power').innerText = state.physical.powerConsumptionKWh.toFixed(4) + ' kWh';
+  // Actualizar KPIs viejos si existen
+  const elRt = document.getElementById('kpi-runtime');
+  if (elRt) elRt.innerText = formatTime(state.physical.runTimeSeconds);
   
-  // Costo financiero estimado: 0.15 USD por KWh
-  const cost = state.physical.powerConsumptionKWh * 0.15;
-  document.getElementById('kpi-cost').innerText = '$' + cost.toFixed(4) + ' USD';
+  const elBatches = document.getElementById('kpi-batches');
+  if (elBatches) elBatches.innerText = state.physical.batchesProcessed;
+  
+  const elPwr = document.getElementById('kpi-power');
+  if (elPwr) elPwr.innerText = state.physical.powerConsumptionKWh.toFixed(4) + ' kWh';
+  
+  const elCost = document.getElementById('kpi-cost');
+  if (elCost) elCost.innerText = '$' + (state.physical.powerConsumptionKWh * 0.15).toFixed(4) + ' USD';
   
   // Actualizar controles de forzado en el panel del Ingeniero
   if (checkPermission('FORCE_ACTUATOR')) {
@@ -2267,38 +2730,43 @@ function applyRBACPermissions() {
   
   // 1. Mostrar/Ocultar pestañas del panel
   const tabDash  = document.getElementById('tab-header-dashboard');
+  const tabAnl   = document.getElementById('tab-header-analytics');
   const tabEng   = document.getElementById('tab-header-engineer');
   const tabMgr   = document.getElementById('tab-header-manager');
   const tabSec   = document.getElementById('tab-header-security');
   const tabUsers = document.getElementById('tab-header-users');
   
   if (user.role === 'Operador') {
-    tabDash.style.display = 'inline-block';
-    tabEng.style.display = 'none';
-    tabMgr.style.display = 'none';
-    tabSec.style.display = 'none';
-    tabUsers.style.display = 'none';
+    if(tabDash) tabDash.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'none';
+    if(tabAnl) tabAnl.style.display = 'none';
+    if(tabMgr) tabMgr.style.display = 'none';
+    if(tabSec) tabSec.style.display = 'none';
+    if(tabUsers) tabUsers.style.display = 'none';
     switchTab('dashboard');
   } else if (user.role === 'Gerente') {
-    tabDash.style.display = 'none'; // Acceso exclusivo a métricas
-    tabEng.style.display = 'none';
-    tabMgr.style.display = 'inline-block';
-    tabSec.style.display = 'none';
-    tabUsers.style.display = 'inline-block'; 
-    switchTab('manager');
+    if(tabDash) tabDash.style.display = 'none';
+    if(tabAnl) tabAnl.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'none';
+    if(tabMgr) tabMgr.style.display = 'inline-block';
+    if(tabSec) tabSec.style.display = 'none';
+    if(tabUsers) tabUsers.style.display = 'inline-block'; 
+    switchTab('analytics');
   } else if (user.role === 'Supervisor' || user.role === 'Ingeniero') {
-    tabDash.style.display = 'inline-block';
-    tabEng.style.display = 'inline-block';
-    tabMgr.style.display = 'inline-block';
-    tabSec.style.display = 'inline-block';
-    tabUsers.style.display = 'inline-block';
+    if(tabDash) tabDash.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'inline-block';
+    if(tabMgr) tabMgr.style.display = 'inline-block';
+    if(tabSec) tabSec.style.display = 'inline-block';
+    if(tabUsers) tabUsers.style.display = 'inline-block';
+    if(tabAnl) tabAnl.style.display = 'inline-block';
     switchTab('dashboard');
   } else if (user.role === 'Admin') {
-    tabDash.style.display = 'inline-block';
-    tabEng.style.display = 'inline-block';
-    tabMgr.style.display = 'inline-block';
-    tabSec.style.display = 'inline-block';
-    tabUsers.style.display = 'inline-block';
+    if(tabDash) tabDash.style.display = 'inline-block';
+    if(tabEng) tabEng.style.display = 'inline-block';
+    if(tabMgr) tabMgr.style.display = 'inline-block';
+    if(tabSec) tabSec.style.display = 'inline-block';
+    if(tabUsers) tabUsers.style.display = 'inline-block';
+    if(tabAnl) tabAnl.style.display = 'inline-block';
     switchTab('users');
   }
   
@@ -2314,21 +2782,44 @@ function applyRBACPermissions() {
   renderAuditLogs();
   
   // Cargar valores de temporizadores en el panel de Ingeniero
-  if (user.role === 'Ingeniero') {
-    document.getElementById('cfg-hopper-delay').value = PLC_STATE.config.hopperOpenDelay;
-    document.getElementById('cfg-cinta0-time').value = PLC_STATE.config.cinta0DischargeTime;
-    document.getElementById('cfg-dest-time').value = PLC_STATE.config.destDischargeTime;
+  if (user.role === 'Ingeniero' || user.role === 'Admin') {
+    const hopperInput = document.getElementById('cfg-hopper-delay');
+    if (hopperInput) hopperInput.value = PLC_STATE.config.hopperOpenDelay;
+    const cinta0Input = document.getElementById('cfg-cinta0-time');
+    if (cinta0Input) cinta0Input.value = PLC_STATE.config.cinta0DischargeTime;
+    const destInput = document.getElementById('cfg-dest-time');
+    if (destInput) destInput.value = PLC_STATE.config.destDischargeTime;
+    
+    // Cargar n8n configs
+    const n8nUrlInput = document.getElementById('cfg-n8n-url');
+    if (n8nUrlInput) n8nUrlInput.value = localStorage.getItem('n8n_url') || 'http://localhost:5678/webhook/hmi-ask';
+    
+    const n8nAuthInput = document.getElementById('cfg-n8n-auth-type');
+    if (n8nAuthInput) n8nAuthInput.value = localStorage.getItem('n8n_auth_type') || 'basic';
+    
+    const n8nCredInput = document.getElementById('cfg-n8n-cred');
+    if (n8nCredInput) n8nCredInput.value = localStorage.getItem('n8n_cred') || 'miguelalexander.urbina@unet.edu.ve:Madagascar=94';
   }
 }
 
 // Navegación de pestañas
 function switchTab(tabId) {
-  const tabs = ['dashboard', 'engineer', 'manager', 'security', 'users'];
+  const tabs = ['dashboard', 'engineer', 'analytics', 'security', 'users'];
   tabs.forEach(t => {
     const pane = document.getElementById(`tab-${t}`);
     const btn  = document.getElementById(`tab-header-${t}`);
-    if (pane) pane.classList.toggle('hidden', t !== tabId);
-    if (btn)  btn.classList.toggle('tab-active', t === tabId);
+    if (pane) {
+      pane.classList.toggle('hidden', t !== tabId);
+      pane.classList.toggle('tab-active', t === tabId);
+    }
+    if (btn) {
+      btn.classList.toggle('tab-active', t === tabId);
+      // Ensure the click event is attached
+      if (!btn.dataset.bound) {
+        btn.addEventListener('click', () => switchTab(t));
+        btn.dataset.bound = 'true';
+      }
+    }
   });
   if (tabId === 'engineer') renderAuditLogs();
   if (tabId === 'users')    renderUsersTable();
@@ -2395,6 +2886,8 @@ async function renderUsersTable() {
 document.addEventListener('DOMContentLoaded', () => {
   // Inicializar simulación con callback de actualización
   initSimulation(updateUI);
+  initDashboard();
+  initChatWidget();
   
   // Comprobar si hay sesión previa
   applyRBACPermissions();
@@ -2457,19 +2950,48 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 4. Cambios de Configuración de Temporizadores (Ingeniero)
-  document.getElementById('config-timers-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const hopper = document.getElementById('cfg-hopper-delay').value;
-    const c0 = document.getElementById('cfg-cinta0-time').value;
-    const dest = document.getElementById('cfg-dest-time').value;
-    
-    sendSecureCommand('CONFIG_UPDATE', {
-      hopperOpenDelay: hopper,
-      cinta0DischargeTime: c0,
-      destDischargeTime: dest
+  const configForm = document.getElementById('config-timers-form');
+  if (configForm) {
+    configForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const hopperD = parseInt(document.getElementById('cfg-hopper-delay').value);
+        const cint0T = parseInt(document.getElementById('cfg-cinta0-time').value);
+        const destT = parseInt(document.getElementById('cfg-dest-time').value);
+        
+        const response = await sendSecureCommand('UPDATE_TIMERS', {
+          hopperOpenDelay: hopperD,
+          cinta0DischargeTime: cint0T,
+          destDischargeTime: destT
+        });
+        
+        if (response.success) {
+          alert('Temporizadores actualizados y firmados correctamente.');
+        } else {
+          alert('Fallo de seguridad al actualizar: ' + response.error);
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
     });
-    alert('Temporizadores del PLC actualizados con éxito por firma digital.');
-  });
+  }
+
+  // Eventos para Ajustes n8n
+  const n8nForm = document.getElementById('config-n8n-form');
+  if (n8nForm) {
+    n8nForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const url = document.getElementById('cfg-n8n-url').value;
+      const type = document.getElementById('cfg-n8n-auth-type').value;
+      const cred = document.getElementById('cfg-n8n-cred').value;
+      
+      localStorage.setItem('n8n_url', url);
+      localStorage.setItem('n8n_auth_type', type);
+      localStorage.setItem('n8n_cred', cred);
+      
+      alert('Configuración de n8n guardada localmente.');
+    });
+  }
   
   // 5. Forzado manual de actuadores (Ingeniero)
   const forceSwitches = [
@@ -2510,7 +3032,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   // 7. Enlace de los botones de pestañas
-  const tabButtons = ['dashboard', 'engineer', 'manager', 'security', 'users'];
+  const tabButtons = ['dashboard', 'engineer', 'manager', 'security', 'users', 'analytics'];
   tabButtons.forEach(t => {
     const btn = document.getElementById(`tab-header-${t}`);
     if (btn) btn.addEventListener('click', () => switchTab(t));
