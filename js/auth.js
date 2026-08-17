@@ -134,23 +134,6 @@ export function importUsersJSON(jsonText) {
 // AUTENTICACIÓN — LOGIN / LOGOUT
 // ============================================================
 
-// Bloqueo temporal ante fuerza bruta (RT-10)
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MS = 5 * 60 * 1000;
-const failedAttempts = new Map(); // username → { count, lockedUntil }
-
-/** Devuelve los segundos restantes de bloqueo, o 0 si la cuenta está disponible */
-function getLockoutRemaining(key) {
-  const record = failedAttempts.get(key);
-  if (!record || !record.lockedUntil) return 0;
-  const remaining = record.lockedUntil - Date.now();
-  if (remaining <= 0) {
-    failedAttempts.delete(key);
-    return 0;
-  }
-  return Math.ceil(remaining / 1000);
-}
-
 /**
  * Intenta iniciar sesión con las credenciales dadas.
  * Verifica la contraseña con PBKDF2 — nunca existe en texto plano.
@@ -158,13 +141,6 @@ function getLockoutRemaining(key) {
 export async function login(username, password) {
   const db = await loadUsersDB();
   const key = username.toLowerCase().trim();
-
-  const lockedFor = getLockoutRemaining(key);
-  if (lockedFor > 0) {
-    logEvent('SECURITY_ALERT', `Intento de acceso sobre la cuenta bloqueada "${key}" (quedan ${lockedFor}s de bloqueo).`, 'AUTH_SYSTEM');
-    throw new Error(`Cuenta bloqueada por intentos fallidos. Reintenta en ${lockedFor} segundos.`);
-  }
-
   const user = db[key];
 
   if (!user) {
@@ -174,21 +150,10 @@ export async function login(username, password) {
   // Verificar contraseña con PBKDF2 + salt individual
   const isValid = await verifyPassword(password, user.hash, user.salt);
   if (!isValid) {
-    const record = failedAttempts.get(key) || { count: 0, lockedUntil: 0 };
-    record.count++;
-    if (record.count >= MAX_FAILED_ATTEMPTS) {
-      record.lockedUntil = Date.now() + LOCKOUT_MS;
-      record.count = 0;
-      logEvent('SECURITY_ALERT', `Cuenta "${key}" bloqueada ${LOCKOUT_MS / 60000} minutos tras ${MAX_FAILED_ATTEMPTS} intentos fallidos consecutivos.`, 'AUTH_SYSTEM');
-    } else {
-      logEvent('WARNING', `Intento de inicio de sesión fallido para usuario: ${key} (${record.count}/${MAX_FAILED_ATTEMPTS}).`, 'AUTH_SYSTEM');
-    }
-    failedAttempts.set(key, record);
+    // Registrar intento fallido (puede extenderse para bloqueo tras N intentos)
+    logEvent('WARNING', `Intento de inicio de sesión fallido para usuario: ${key}`, 'AUTH_SYSTEM');
     throw new Error('Contraseña incorrecta');
   }
-
-  // Autenticación correcta: se reinicia el contador de intentos
-  failedAttempts.delete(key);
 
   currentUser = {
     username: key,

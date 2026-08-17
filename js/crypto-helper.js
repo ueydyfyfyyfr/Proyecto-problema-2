@@ -104,13 +104,6 @@ export async function hashSHA256(text) {
 // HMAC-SHA256 — Firma de tramas OT (comandos PLC)
 // ============================================================
 
-/**
- * Clave compartida HMI↔PLC. Definición única del proyecto (RT-09):
- * cualquier módulo que firme o verifique tramas debe importarla de aquí,
- * nunca redeclararla como literal local.
- */
-export const PLC_SHARED_SECRET = 'PlcSuperSecretKeyOT2026!';
-
 async function importHMACKey(secretStr) {
   const enc = new TextEncoder();
   return await window.crypto.subtle.importKey(
