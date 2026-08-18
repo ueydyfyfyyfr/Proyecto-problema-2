@@ -570,7 +570,7 @@ function checkPermission(action) {
     case 'VIEW_ANALYTICS':    
       return R === 'Gerente' || R === 'Admin' || R === 'Supervisor';
     case 'USE_AI_ASSISTANT':
-      return R === 'Admin' || R === 'Gerente' || R === 'Ingeniero' || caps.includes('USE_AI_ASSISTANT');
+      return true; // Available for all authenticated users
     case 'MANAGE_USERS':    
       return R === 'Admin' || R === 'Gerente' || R === 'Supervisor';
     default:                
