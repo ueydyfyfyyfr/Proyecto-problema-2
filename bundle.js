@@ -558,7 +558,7 @@ function checkPermission(action) {
 
   switch (action) {
     case 'BASIC_CONTROL':   
-      return R === 'Supervisor' || (R === 'Operador' && caps.includes('CONTROL_MANUAL'));
+      return R === 'Admin' || R === 'Ingeniero' || R === 'Supervisor' || (R === 'Operador' && caps.includes('CONTROL_MANUAL'));
     case 'ADVANCED_CONFIG': 
       return R === 'Supervisor' || (R === 'Operador' && caps.includes('CHANGE_SETPOINTS'));
     case 'FORCE_ACTUATOR':  
