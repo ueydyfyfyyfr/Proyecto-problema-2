@@ -427,7 +427,20 @@ document.addEventListener('DOMContentLoaded', () => {
   initChatWidget();
   
   // Comprobar si hay sesión previa
-  applyRBACPermissions();
+  // Control de Efectos de Sonido
+  const btnSound = document.getElementById('btn-sound-toggle');
+  if (btnSound) {
+    const enabled = isSoundEnabled();
+    btnSound.classList.toggle('muted', !enabled);
+    btnSound.textContent = enabled ? '🔊 AUDIO' : '🔇 AUDIO';
+    btnSound.addEventListener('click', () => {
+      const newEnabled = !isSoundEnabled();
+      setSoundEnabled(newEnabled);
+      btnSound.classList.toggle('muted', !newEnabled);
+      btnSound.textContent = newEnabled ? '🔊 AUDIO' : '🔇 AUDIO';
+      if (newEnabled) playSound('click');
+    });
+  }
   
   // 1. Manejo del Login
   

@@ -54,6 +54,7 @@
       </div>
 
       <div class="nav-right">
+        <button id="btn-sound-toggle" class="btn-sound-toggle" title="Activar/Silenciar Efectos de Sonido">🔊 AUDIO</button>
         <div class="user-profile">
           <span id="user-role-badge" class="role-badge">Op</span>
           <span id="user-welcome-name" class="user-name">Usuario</span>
@@ -456,8 +457,11 @@
   
   <div id="ai-chat-widget" class="chat-widget hidden cyberpunk-panel">
     <div class="chat-header">
-      AGENTE OT-AI
-      <button id="btn-toggle-chat" class="btn-icon">✖</button>
+      <span>AGENTE OT-AI</span>
+      <div>
+        <button id="btn-tts-toggle" class="btn-icon" title="Voz activada/desactivada" style="margin-right:8px;">🔊</button>
+        <button id="btn-toggle-chat" class="btn-icon">✖</button>
+      </div>
     </div>
     <div class="chat-body" id="chat-messages">
       <div class="msg bot">Sistema Inicializado. ¿En qué te ayudo?</div>

@@ -32,6 +32,13 @@ export function getNetworkTraffic() {
 export async function sendSecureCommand(command, args = null) {
   const user = getCurrentUser();
   const userName = user ? `${user.name} (${user.role})` : 'ANONYMOUS';
+
+  // Reproducir efecto de sonido industrial correspondiente
+  if (command === 'PMARCHA') playSound('marcha');
+  else if (command === 'PPARO') playSound('paro');
+  else if (command === 'PSELEC') playSound('selection');
+  else if (command === 'EMERGENCY') playSound('emergency');
+  else playSound('click');
   
   const payload = {
     command,

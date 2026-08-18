@@ -1,6 +1,7 @@
 const fs = require("fs");
 const FILES = [
   "js/crypto-helper.js",
+  "js/audio-effects.js",
   "js/audit-log.js",
   "js/auth.js",
   "js/plc-simulation.js",

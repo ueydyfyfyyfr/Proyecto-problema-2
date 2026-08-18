@@ -4,14 +4,25 @@ import { getCurrentUser, checkPermission } from './auth.js';
 
 let chatHistory = [];
 
+let ttsEnabled = false;
+
 export function initChatWidget() {
   const btnOpen = document.getElementById('btn-open-chat');
   const btnClose = document.getElementById('btn-toggle-chat');
   const chatWidget = document.getElementById('ai-chat-widget');
   const btnSend = document.getElementById('btn-send-chat');
   const input = document.getElementById('chat-input');
+  const btnTts = document.getElementById('btn-tts-toggle');
   
   if (!btnOpen || !chatWidget) return;
+  
+  if (btnTts) {
+    btnTts.addEventListener('click', () => {
+      ttsEnabled = !ttsEnabled;
+      btnTts.textContent = ttsEnabled ? '🔊' : '🔇';
+      btnTts.title = ttsEnabled ? 'Voz activada' : 'Voz desactivada';
+    });
+  }
   
   // Mostrar el botón de abrir si tiene permisos
   setInterval(() => {
@@ -58,10 +69,10 @@ export function initChatWidget() {
     if (led) {
       if (isAgentConnected()) {
         led.className = 'status-led led-green';
-        led.title = 'Agente N8N Conectado';
+        led.title = 'Agente IA Autónomo Activo';
       } else {
         led.className = 'status-led led-orange';
-        led.title = 'Modo Local / Degradado (Sin conexión)';
+        led.title = 'Modo Local / Degradado';
       }
     }
   }, 2000);
@@ -80,9 +91,9 @@ async function handleSend() {
   logEvent('AI_INTERACTION', `Consulta al Asistente IA: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`, currentUser ? currentUser.name : 'Unknown');
   
   // Mostrar indicador de "escribiendo..."
-  const thinkingId = addMessage('...', 'bot-thinking');
+  const thinkingId = addMessage('Pensando...', 'bot-thinking');
   
-  const historyContext = chatHistory.slice(-6); // últimos 6 mensajes
+  const historyContext = chatHistory.slice(-6);
   
   try {
     const response = await askAgent(text, historyContext);
@@ -92,6 +103,16 @@ async function handleSend() {
     if (el) el.remove();
     
     addMessage(response.text, 'bot');
+    playSound('ai_msg');
+
+    // Síntesis de voz (Text to Speech)
+    if (ttsEnabled && window.speechSynthesis) {
+      const cleanText = response.text.replace(/[*#_•]/g, '');
+      const utterance = new SpeechSynthesisUtterance(cleanText.substring(0, 200));
+      utterance.lang = 'es-ES';
+      window.speechSynthesis.speak(utterance);
+    }
+
     chatHistory.push({ role: 'user', content: text });
     chatHistory.push({ role: 'assistant', content: response.text });
     
@@ -110,11 +131,17 @@ function addMessage(text, type) {
   
   if (type === 'user') {
     div.className = 'msg user';
+    div.textContent = text;
   } else if (type === 'bot' || type === 'bot-thinking') {
     div.className = 'msg bot';
+    // Formatear negritas básicas y saltos de línea para markdown
+    let formatted = text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+    div.innerHTML = formatted;
   }
   
-  div.textContent = text; // Previene XSS
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
   return id;

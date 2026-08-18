@@ -175,6 +175,153 @@ function generateNonce() {
 }
 
 
+/* === js/audio-effects.js === */
+// ============================================================
+// MODULO DE SÍNTESIS DE AUDIO INDUSTRIAL (WEB AUDIO API NATIVO)
+// No requiere archivos de audio externos .mp3 / .wav
+// ============================================================
+
+let audioCtx = null;
+let soundEnabled = true;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) {
+      audioCtx = new AudioContext();
+    }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+function setSoundEnabled(enabled) {
+  soundEnabled = enabled;
+  localStorage.setItem('hmi_sound_enabled', enabled ? 'true' : 'false');
+}
+
+function isSoundEnabled() {
+  const saved = localStorage.getItem('hmi_sound_enabled');
+  if (saved !== null) return saved === 'true';
+  return soundEnabled;
+}
+
+function playSound(type) {
+  if (!isSoundEnabled()) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+
+    switch (type) {
+      case 'click': {
+        // Clic de botón táctil SCADA
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.exponentialRampToValueAtTime(400, now + 0.05);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.05);
+        break;
+      }
+
+      case 'marcha': {
+        // Tono ascendente de arranque industrial
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.exponentialRampToValueAtTime(660, now + 0.25);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+        break;
+      }
+
+      case 'paro': {
+        // Tono descendente de parada segura
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(500, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.3);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.3);
+        break;
+      }
+
+      case 'emergency': {
+        // Alarma doble tritono de emergencia OT
+        [0, 0.15].forEach(offset => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(880, now + offset);
+          osc.frequency.setValueAtTime(440, now + offset + 0.08);
+          gain.gain.setValueAtTime(0.25, now + offset);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.14);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + offset);
+          osc.stop(now + offset + 0.14);
+        });
+        break;
+      }
+
+      case 'ai_msg': {
+        // Tono sutil de mensaje de la IA
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(523.25, now); // C5
+        osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
+        osc.frequency.setValueAtTime(783.99, now + 0.16); // G5
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+        break;
+      }
+
+      case 'selection': {
+        // Tono mecánico de rotación de posición
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.linearRampToValueAtTime(450, now + 0.1);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn('[Audio] Audio synthesis not supported or blocked:', e);
+  }
+}
+
+
 /* === js/audit-log.js === */
 // Registro de auditoría para auditorías OT/IT y de seguridad
 
@@ -1692,6 +1839,58 @@ function renderHorizontalBar(containerId, data, labels, title = '') {
   container.innerHTML = svg;
 }
 
+function renderLineChart(containerId, dataArray, labelsArray, color = '#a855f7') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  if (!dataArray || dataArray.length < 2) {
+    container.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; height:100%; color:#666; font-family:monospace; font-size:12px;">Esperando datos de tendencia...</div>`;
+    return;
+  }
+  
+  const w = 320, h = 130;
+  const padL = 35, padR = 15, padT = 20, padB = 25;
+  const chartW = w - padL - padR;
+  const chartH = h - padT - padB;
+  
+  const maxVal = Math.max(...dataArray, 1);
+  const minVal = 0;
+  const range = maxVal - minVal || 1;
+  
+  const dx = chartW / (dataArray.length - 1);
+  const points = dataArray.map((v, i) => {
+    const x = padL + i * dx;
+    const y = padT + chartH - ((v - minVal) / range) * chartH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  
+  const fillPoints = `${padL},${padT + chartH} ${points} ${padL + chartW},${padT + chartH}`;
+  
+  const svg = `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:100%;">
+      <!-- Grid lines -->
+      <line x1="${padL}" y1="${padT}" x2="${padL + chartW}" y2="${padT}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="3,3" />
+      <line x1="${padL}" y1="${padT + chartH/2}" x2="${padL + chartW}" y2="${padT + chartH/2}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="3,3" />
+      <line x1="${padL}" y1="${padT + chartH}" x2="${padL + chartW}" y2="${padT + chartH}" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+      
+      <!-- Area fill -->
+      <polygon points="${fillPoints}" fill="${color}" opacity="0.15" />
+      
+      <!-- Line -->
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      
+      <!-- Y-Axis labels -->
+      <text x="${padL - 5}" y="${padT + 4}" text-anchor="end" fill="#888" font-size="9" font-family="monospace">${maxVal.toFixed(1)}</text>
+      <text x="${padL - 5}" y="${padT + chartH + 3}" text-anchor="end" fill="#888" font-size="9" font-family="monospace">0.0</text>
+      
+      <!-- Current value badge -->
+      <text x="${w - padR}" y="${padT}" text-anchor="end" fill="${color}" font-size="11" font-weight="bold" font-family="monospace">${dataArray[dataArray.length - 1].toFixed(2)}</text>
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+
+
 
 /* === js/dashboard.js === */
 
@@ -1799,6 +1998,22 @@ function generateIntelligentResponse(msg, history) {
   const physical = PLC_STATE.physical;
   const outputs = PLC_STATE.outputs;
   const stats = PLC_STATE.stats;
+
+  // ─── COMANDOS DE ACCIÓN (AGENTE CON CAPACIDAD DE CONTROL) ───
+  if (match(lowerMsg, ['iniciar marcha', 'inicia marcha', 'arranca la planta', 'arrancar la planta', 'encender planta', 'pon en marcha'])) {
+    sendSecureCommand('PMARCHA');
+    return `▶ **Comando Ejecutado por la IA**\n\nSe ha firmado y transmitido el comando de **MARCHA** al PLC. La secuencia de posicionamiento y descarga ha comenzado.`;
+  }
+  
+  if (match(lowerMsg, ['detener planta', 'deten la planta', 'ejecutar paro', 'apagar planta', 'para la planta', 'haz un paro'])) {
+    sendSecureCommand('PPARO');
+    return `⏹ **Comando Ejecutado por la IA**\n\nSe ha firmado y transmitido el comando de **PARADA SEGURA** al PLC. Se ha cerrado la tolva y se iniciará el vaciado de las cintas.`;
+  }
+
+  if (match(lowerMsg, ['cambiar posicion', 'cambia posicion', 'cambia destino', 'seleccionar posicion', 'siguiente posicion'])) {
+    sendSecureCommand('PSELEC');
+    return `↻ **Comando Ejecutado por la IA**\n\nSe ha cambiado la posición de destino seleccionada en la plataforma giratoria.`;
+  }
 
   // ─── ESTADO GENERAL / RESUMEN ───
   if (match(lowerMsg, ['estado', 'resumen', 'como esta', 'como va', 'status', 'general', 'reporte', 'informe'])) {
@@ -2015,14 +2230,25 @@ function formatSeconds(totalSec) {
 
 let chatHistory = [];
 
+let ttsEnabled = false;
+
 function initChatWidget() {
   const btnOpen = document.getElementById('btn-open-chat');
   const btnClose = document.getElementById('btn-toggle-chat');
   const chatWidget = document.getElementById('ai-chat-widget');
   const btnSend = document.getElementById('btn-send-chat');
   const input = document.getElementById('chat-input');
+  const btnTts = document.getElementById('btn-tts-toggle');
   
   if (!btnOpen || !chatWidget) return;
+  
+  if (btnTts) {
+    btnTts.addEventListener('click', () => {
+      ttsEnabled = !ttsEnabled;
+      btnTts.textContent = ttsEnabled ? '🔊' : '🔇';
+      btnTts.title = ttsEnabled ? 'Voz activada' : 'Voz desactivada';
+    });
+  }
   
   // Mostrar el botón de abrir si tiene permisos
   setInterval(() => {
@@ -2069,10 +2295,10 @@ function initChatWidget() {
     if (led) {
       if (isAgentConnected()) {
         led.className = 'status-led led-green';
-        led.title = 'Agente N8N Conectado';
+        led.title = 'Agente IA Autónomo Activo';
       } else {
         led.className = 'status-led led-orange';
-        led.title = 'Modo Local / Degradado (Sin conexión)';
+        led.title = 'Modo Local / Degradado';
       }
     }
   }, 2000);
@@ -2091,9 +2317,9 @@ async function handleSend() {
   logEvent('AI_INTERACTION', `Consulta al Asistente IA: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`, currentUser ? currentUser.name : 'Unknown');
   
   // Mostrar indicador de "escribiendo..."
-  const thinkingId = addMessage('...', 'bot-thinking');
+  const thinkingId = addMessage('Pensando...', 'bot-thinking');
   
-  const historyContext = chatHistory.slice(-6); // últimos 6 mensajes
+  const historyContext = chatHistory.slice(-6);
   
   try {
     const response = await askAgent(text, historyContext);
@@ -2103,6 +2329,16 @@ async function handleSend() {
     if (el) el.remove();
     
     addMessage(response.text, 'bot');
+    playSound('ai_msg');
+
+    // Síntesis de voz (Text to Speech)
+    if (ttsEnabled && window.speechSynthesis) {
+      const cleanText = response.text.replace(/[*#_•]/g, '');
+      const utterance = new SpeechSynthesisUtterance(cleanText.substring(0, 200));
+      utterance.lang = 'es-ES';
+      window.speechSynthesis.speak(utterance);
+    }
+
     chatHistory.push({ role: 'user', content: text });
     chatHistory.push({ role: 'assistant', content: response.text });
     
@@ -2121,11 +2357,17 @@ function addMessage(text, type) {
   
   if (type === 'user') {
     div.className = 'msg user';
+    div.textContent = text;
   } else if (type === 'bot' || type === 'bot-thinking') {
     div.className = 'msg bot';
+    // Formatear negritas básicas y saltos de línea para markdown
+    let formatted = text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+    div.innerHTML = formatted;
   }
   
-  div.textContent = text; // Previene XSS
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
   return id;
@@ -2164,6 +2406,13 @@ function getNetworkTraffic() {
 async function sendSecureCommand(command, args = null) {
   const user = getCurrentUser();
   const userName = user ? `${user.name} (${user.role})` : 'ANONYMOUS';
+
+  // Reproducir efecto de sonido industrial correspondiente
+  if (command === 'PMARCHA') playSound('marcha');
+  else if (command === 'PPARO') playSound('paro');
+  else if (command === 'PSELEC') playSound('selection');
+  else if (command === 'EMERGENCY') playSound('emergency');
+  else playSound('click');
   
   const payload = {
     command,
@@ -3013,7 +3262,20 @@ document.addEventListener('DOMContentLoaded', () => {
   initChatWidget();
   
   // Comprobar si hay sesión previa
-  applyRBACPermissions();
+  // Control de Efectos de Sonido
+  const btnSound = document.getElementById('btn-sound-toggle');
+  if (btnSound) {
+    const enabled = isSoundEnabled();
+    btnSound.classList.toggle('muted', !enabled);
+    btnSound.textContent = enabled ? '🔊 AUDIO' : '🔇 AUDIO';
+    btnSound.addEventListener('click', () => {
+      const newEnabled = !isSoundEnabled();
+      setSoundEnabled(newEnabled);
+      btnSound.classList.toggle('muted', !newEnabled);
+      btnSound.textContent = newEnabled ? '🔊 AUDIO' : '🔇 AUDIO';
+      if (newEnabled) playSound('click');
+    });
+  }
   
   // 1. Manejo del Login
   

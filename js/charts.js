@@ -150,3 +150,55 @@ export function renderHorizontalBar(containerId, data, labels, title = '') {
   `;
   container.innerHTML = svg;
 }
+
+export function renderLineChart(containerId, dataArray, labelsArray, color = '#a855f7') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  if (!dataArray || dataArray.length < 2) {
+    container.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; height:100%; color:#666; font-family:monospace; font-size:12px;">Esperando datos de tendencia...</div>`;
+    return;
+  }
+  
+  const w = 320, h = 130;
+  const padL = 35, padR = 15, padT = 20, padB = 25;
+  const chartW = w - padL - padR;
+  const chartH = h - padT - padB;
+  
+  const maxVal = Math.max(...dataArray, 1);
+  const minVal = 0;
+  const range = maxVal - minVal || 1;
+  
+  const dx = chartW / (dataArray.length - 1);
+  const points = dataArray.map((v, i) => {
+    const x = padL + i * dx;
+    const y = padT + chartH - ((v - minVal) / range) * chartH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  
+  const fillPoints = `${padL},${padT + chartH} ${points} ${padL + chartW},${padT + chartH}`;
+  
+  const svg = `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:100%;">
+      <!-- Grid lines -->
+      <line x1="${padL}" y1="${padT}" x2="${padL + chartW}" y2="${padT}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="3,3" />
+      <line x1="${padL}" y1="${padT + chartH/2}" x2="${padL + chartW}" y2="${padT + chartH/2}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="3,3" />
+      <line x1="${padL}" y1="${padT + chartH}" x2="${padL + chartW}" y2="${padT + chartH}" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+      
+      <!-- Area fill -->
+      <polygon points="${fillPoints}" fill="${color}" opacity="0.15" />
+      
+      <!-- Line -->
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      
+      <!-- Y-Axis labels -->
+      <text x="${padL - 5}" y="${padT + 4}" text-anchor="end" fill="#888" font-size="9" font-family="monospace">${maxVal.toFixed(1)}</text>
+      <text x="${padL - 5}" y="${padT + chartH + 3}" text-anchor="end" fill="#888" font-size="9" font-family="monospace">0.0</text>
+      
+      <!-- Current value badge -->
+      <text x="${w - padR}" y="${padT}" text-anchor="end" fill="${color}" font-size="11" font-weight="bold" font-family="monospace">${dataArray[dataArray.length - 1].toFixed(2)}</text>
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+

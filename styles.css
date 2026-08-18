@@ -282,3 +282,65 @@ canvas#plant-canvas {
   background: var(--border-neon);
   color: #fff;
 }
+
+/* --- AUDIO & TTS CONTROLS --- */
+.btn-sound-toggle {
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid var(--border-neon);
+  color: var(--text-neon);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-sound-toggle:hover {
+  background: var(--border-neon);
+  color: #fff;
+  box-shadow: 0 0 10px var(--border-neon);
+}
+.btn-sound-toggle.muted {
+  opacity: 0.5;
+  border-color: #666;
+  color: #888;
+}
+
+/* --- WIRESHARK / PACKET INSPECTOR --- */
+.wireshark-table {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.wireshark-table th {
+  background: rgba(168, 85, 247, 0.2);
+  color: var(--text-neon);
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-neon);
+}
+.wireshark-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.badge-sent { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; padding: 2px 6px; border-radius: 3px; }
+.badge-received { background: rgba(59, 130, 246, 0.2); color: #3b82f6; border: 1px solid #3b82f6; padding: 2px 6px; border-radius: 3px; }
+.badge-attack { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; padding: 2px 6px; border-radius: 3px; font-weight: bold; }
+.truncate-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+
+/* --- CANVAS FLOATING TELEMETRY OVERLAY --- */
+.canvas-tooltip {
+  position: absolute;
+  background: rgba(10, 10, 18, 0.9);
+  border: 1px solid var(--border-neon);
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 50;
+  transition: opacity 0.2s ease;
+}
+

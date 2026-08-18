@@ -31,6 +31,22 @@ function generateIntelligentResponse(msg, history) {
   const outputs = PLC_STATE.outputs;
   const stats = PLC_STATE.stats;
 
+  // ─── COMANDOS DE ACCIÓN (AGENTE CON CAPACIDAD DE CONTROL) ───
+  if (match(lowerMsg, ['iniciar marcha', 'inicia marcha', 'arranca la planta', 'arrancar la planta', 'encender planta', 'pon en marcha'])) {
+    sendSecureCommand('PMARCHA');
+    return `▶ **Comando Ejecutado por la IA**\n\nSe ha firmado y transmitido el comando de **MARCHA** al PLC. La secuencia de posicionamiento y descarga ha comenzado.`;
+  }
+  
+  if (match(lowerMsg, ['detener planta', 'deten la planta', 'ejecutar paro', 'apagar planta', 'para la planta', 'haz un paro'])) {
+    sendSecureCommand('PPARO');
+    return `⏹ **Comando Ejecutado por la IA**\n\nSe ha firmado y transmitido el comando de **PARADA SEGURA** al PLC. Se ha cerrado la tolva y se iniciará el vaciado de las cintas.`;
+  }
+
+  if (match(lowerMsg, ['cambiar posicion', 'cambia posicion', 'cambia destino', 'seleccionar posicion', 'siguiente posicion'])) {
+    sendSecureCommand('PSELEC');
+    return `↻ **Comando Ejecutado por la IA**\n\nSe ha cambiado la posición de destino seleccionada en la plataforma giratoria.`;
+  }
+
   // ─── ESTADO GENERAL / RESUMEN ───
   if (match(lowerMsg, ['estado', 'resumen', 'como esta', 'como va', 'status', 'general', 'reporte', 'informe'])) {
     const statusEmoji = status === 'RUNNING' ? '🟢' : status === 'IDLE' ? '🟡' : status === 'ALARM' ? '🔴' : '🔵';
