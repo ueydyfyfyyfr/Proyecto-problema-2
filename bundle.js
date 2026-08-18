@@ -1771,7 +1771,7 @@ function refreshDashboard() {
 
 /* === js/n8n-connector.js === */
 
-const N8N_WEBHOOK_URL = 'http://localhost:5678/webhook/hmi-ask'; // Configurable URL
+const N8N_WEBHOOK_URL = 'https://agentes.henkki.co/webhook/hmi-ask'; // Configurable URL
 let connectorActive = false;
 
 async function askAgent(message, history) {
@@ -1791,7 +1791,7 @@ async function askAgent(message, history) {
 
   // Cargar configuración desde localStorage (establecida en la pestaña de Ajustes)
   // Hardcode configuration so the user never has to save it again
-  const cfgUrl = localStorage.getItem('n8n_url') || 'https://agentes.henkki.co/webhook-test/hmi-ask';
+  const cfgUrl = localStorage.getItem('n8n_url') || 'https://agentes.henkki.co/webhook/hmi-ask';
   const authType = localStorage.getItem('n8n_auth_type') || 'none';
   const authCred = localStorage.getItem('n8n_cred') || '';
 
@@ -1807,7 +1807,7 @@ async function askAgent(message, history) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds timeout
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds timeout
     
     const response = await fetch(cfgUrl, {
       method: 'POST',
@@ -2764,7 +2764,7 @@ function applyRBACPermissions() {
     
     // Cargar n8n configs
     const n8nUrlInput = document.getElementById('cfg-n8n-url');
-    if (n8nUrlInput) n8nUrlInput.value = localStorage.getItem('n8n_url') || 'http://localhost:5678/webhook/hmi-ask';
+    if (n8nUrlInput) n8nUrlInput.value = localStorage.getItem('n8n_url') || 'https://agentes.henkki.co/webhook/hmi-ask';
     
     const n8nAuthInput = document.getElementById('cfg-n8n-auth-type');
     if (n8nAuthInput) n8nAuthInput.value = localStorage.getItem('n8n_auth_type') || 'basic';

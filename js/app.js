@@ -329,7 +329,7 @@ function applyRBACPermissions() {
     
     // Cargar n8n configs
     const n8nUrlInput = document.getElementById('cfg-n8n-url');
-    if (n8nUrlInput) n8nUrlInput.value = localStorage.getItem('n8n_url') || 'http://localhost:5678/webhook/hmi-ask';
+    if (n8nUrlInput) n8nUrlInput.value = localStorage.getItem('n8n_url') || 'https://agentes.henkki.co/webhook/hmi-ask';
     
     const n8nAuthInput = document.getElementById('cfg-n8n-auth-type');
     if (n8nAuthInput) n8nAuthInput.value = localStorage.getItem('n8n_auth_type') || 'basic';
