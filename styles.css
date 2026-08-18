@@ -164,9 +164,12 @@ button { cursor: pointer; border: none; font-family: inherit; transition: all 0.
 
 /* === DASHBOARD COCKPIT (CANVAS + BOTTOM CONSOLE) === */
 .canvas-wrapper {
-  flex-grow: 1; position: relative; background: #000;
+  flex-grow: 1; position: relative; 
+  background: linear-gradient(180deg, rgba(10, 10, 18, 0.65) 0%, rgba(10, 10, 18, 0.82) 100%), url('assets/industrial_bg.jpg') no-repeat center center;
+  background-size: cover;
   display: flex; justify-content: center; align-items: center;
   overflow: hidden;
+  box-shadow: inset 0 0 50px rgba(0,0,0,0.8);
 }
 canvas#plant-canvas {
   max-width: 100%; max-height: 100%; object-fit: contain;
@@ -224,19 +227,34 @@ canvas#plant-canvas {
 .tel-value { font-size: 18px; font-family: var(--font-mono); color: var(--text-neon); }
 
 /* === OTHER TABS (Panels Layout) === */
-.panel-layout { display: flex; flex-wrap: wrap; padding: 20px; gap: 20px; overflow-y: auto; height: 100%; }
-.cyber-panel { background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(168, 85, 247, 0.3); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5), inset 0 0 15px rgba(168, 85, 247, 0.05); padding: 20px; flex: 1 1 400px; position: relative; border-radius: 8px; }
-.cyber-panel::before { content: ''; position: absolute; top: 0; left: 10px; width: 30px; height: 2px; background: var(--border-neon); box-shadow: 0 0 10px var(--border-neon); }
+.panel-layout { 
+  display: flex; flex-wrap: wrap; padding: 25px; gap: 24px; overflow-y: auto; height: 100%; 
+  background: radial-gradient(circle at 50% 20%, rgba(168, 85, 247, 0.08) 0%, transparent 70%);
+}
+.cyber-panel { 
+  background: linear-gradient(135deg, rgba(24, 24, 32, 0.8) 0%, rgba(15, 15, 23, 0.9) 100%); 
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); 
+  border: 1px solid rgba(168, 85, 247, 0.35); 
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.1); 
+  padding: 22px; flex: 1 1 400px; position: relative; border-radius: 12px;
+  transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.cyber-panel:hover {
+  border-color: rgba(168, 85, 247, 0.6);
+  box-shadow: 0 12px 40px 0 rgba(168, 85, 247, 0.25);
+  transform: translateY(-2px);
+}
+.cyber-panel::before { content: ''; position: absolute; top: 0; left: 16px; width: 45px; height: 3px; background: linear-gradient(90deg, var(--border-neon), transparent); box-shadow: 0 0 10px var(--border-neon); border-radius: 2px; }
 .cyber-panel.full-width { flex: 1 1 100%; }
-.panel-header { font-size: 14px; font-weight: bold; color: var(--text-neon); border-bottom: 1px solid rgba(168, 85, 247, 0.3); padding-bottom: 8px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; text-transform: uppercase; letter-spacing: 2px; }
-.panel-header::after { content: '▼'; font-size: 10px; opacity: 0.5; }
+.panel-header { font-size: 14px; font-weight: bold; color: var(--text-neon); border-bottom: 1px solid rgba(168, 85, 247, 0.3); padding-bottom: 10px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; text-transform: uppercase; letter-spacing: 2px; }
+.panel-header::after { content: '⚡'; font-size: 12px; opacity: 0.7; }
 .chart-wrapper { position: relative; height: 250px; width: 100%; }
 
-.table-scroll { overflow-x: auto; }
-.cyber-table { width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--font-mono); font-size: 13px; background: rgba(0, 0, 0, 0.4); border-radius: 8px; overflow: hidden; border: 1px solid rgba(168, 85, 247, 0.2); }
-.cyber-table th { background: rgba(168, 85, 247, 0.15); color: #d8b4fe; text-align: left; padding: 12px; border-bottom: 2px solid rgba(168, 85, 247, 0.4); text-transform: uppercase; letter-spacing: 1px; }
-.cyber-table td { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-main); }
-.cyber-table tr:hover td { background: rgba(168, 85, 247, 0.1); color: #fff; }
+.table-scroll { overflow-x: auto; border-radius: 8px; }
+.cyber-table { width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--font-mono); font-size: 13px; background: rgba(10, 10, 16, 0.6); border-radius: 8px; overflow: hidden; border: 1px solid rgba(168, 85, 247, 0.3); }
+.cyber-table th { background: linear-gradient(90deg, rgba(168, 85, 247, 0.25), rgba(168, 85, 247, 0.1)); color: #d8b4fe; text-align: left; padding: 14px 16px; border-bottom: 2px solid rgba(168, 85, 247, 0.5); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
+.cyber-table td { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-main); }
+.cyber-table tr:hover td { background: rgba(168, 85, 247, 0.12); color: #fff; }
 
 /* === AI CHAT WIDGET === */
 .chat-fab { position: fixed; bottom: 30px; right: 30px; width: 60px; height: 60px; border-radius: 50%; background: var(--bg-panel-light); border: 2px solid var(--text-neon); color: var(--text-neon); font-family: var(--font-mono); font-size: 18px; font-weight: bold; box-shadow: 0 0 15px var(--border-dim); z-index: 1000; }
