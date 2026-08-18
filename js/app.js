@@ -217,24 +217,10 @@ function renderAuditLogs() {
 }
 
 // Sincronizar el panel de forzado con el estado físico real
+// Sincronizar el panel de forzado con el estado físico real (Deshabilitado, elementos UI eliminados)
 function updateForcedSwitches(state) {
-  const switches = [
-    { id: 'force-mc0', output: 'MC0' },
-    { id: 'force-mc1', output: 'MC1' },
-    { id: 'force-mc2', output: 'MC2' },
-    { id: 'force-mc3', output: 'MC3' },
-    { id: 'force-mgizq', output: 'MGIzq' },
-    { id: 'force-mgder', output: 'MGDer' },
-    { id: 'force-mtolab', output: 'MTolAb' },
-    { id: 'force-mtolce', output: 'MTolCe' },
-  ];
-  
-  switches.forEach(sw => {
-    const el = document.getElementById(sw.id);
-    if (el) {
-      el.checked = state.outputs[sw.output];
-    }
-  });
+  // Ya no se dibujan estos interruptores en la nueva UI
+}
   
   const sensors = [
     { id: 'fail-vigc0', sensor: 'VigC0' },
@@ -558,43 +544,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   
-  // 5. Forzado manual de actuadores (Ingeniero)
-  const forceSwitches = [
-    { id: 'force-mc0', output: 'MC0' },
-    { id: 'force-mc1', output: 'MC1' },
-    { id: 'force-mc2', output: 'MC2' },
-    { id: 'force-mc3', output: 'MC3' },
-    { id: 'force-mgizq', output: 'MGIzq' },
-    { id: 'force-mgder', output: 'MGDer' },
-    { id: 'force-mtolab', output: 'MTolAb' },
-    { id: 'force-mtolce', output: 'MTolCe' },
-  ];
-  
-  forceSwitches.forEach(sw => {
-    document.getElementById(sw.id).addEventListener('change', (e) => {
-      sendSecureCommand('FORCE_ACTUATOR', {
-        output: sw.output,
-        value: e.target.checked
-      });
-    });
-  });
-  
-  // 6. Inyección de fallas de velocidad (Ingeniero)
-  const failSensors = [
-    { id: 'fail-vigc0', sensor: 'VigC0' },
-    { id: 'fail-vigc1', sensor: 'VigC1' },
-    { id: 'fail-vigc2', sensor: 'VigC2' },
-    { id: 'fail-vigc3', sensor: 'VigC3' },
-  ];
-  
-  failSensors.forEach(sn => {
-    document.getElementById(sn.id).addEventListener('change', (e) => {
-      sendSecureCommand('INJECT_FAULT', {
-        sensor: sn.sensor,
-        value: e.target.checked // true significa inyectar falla (sensor desactiva señal)
-      });
-    });
-  });
+  // 5. Forzado manual de actuadores (Ingeniero) (ELIMINADOS DE UI)
+  // 6. Inyección de fallas de velocidad (Ingeniero) (ELIMINADOS DE UI)
   
   // 7. Enlace de los botones de pestañas
   const tabButtons = ['dashboard', 'engineer', 'manager', 'security', 'users', 'analytics'];

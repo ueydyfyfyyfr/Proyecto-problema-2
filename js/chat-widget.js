@@ -44,7 +44,7 @@ export function initChatWidget() {
   quickReplies.forEach(btn => {
     btn.addEventListener('click', () => {
       input.value = btn.innerText;
-      sendBtn.click();
+      btnSend.click();
     });
   });
 
