@@ -1889,6 +1889,11 @@ function initChatWidget() {
   btnOpen.addEventListener('click', () => {
     chatWidget.classList.remove('hidden');
     btnOpen.classList.add('hidden');
+    const roleLbl = document.getElementById('chat-role-lbl');
+    if (roleLbl) {
+      const user = getCurrentUser();
+      roleLbl.textContent = user ? user.role : '--';
+    }
     input.focus();
   });
   

@@ -295,223 +295,36 @@
 
   <!-- ==================== WIDGET CHAT IA ==================== -->
   <button id="btn-open-chat" class="chat-fab hidden">
-    <div id="chat-status-led" class="status-led led-orange" style="position:absolute; top:-2px; right:-2px;"></div>
-    <span>IA</span>
+    <span class="fab-badge">IA</span>
+    <span class="fab-icon">🤖</span>
   </button>
-  
-  <div id="ai-chat-widget" class="chat-widget hidden cyberpunk-panel">
+
+  <div id="ai-chat-widget" class="chat-widget hidden">
     <div class="chat-header">
-      AGENTE OT-AI
-      <button id="btn-toggle-chat" class="btn-icon">✖</button>
+      <div class="chat-avatar">🤖</div>
+      <div class="chat-header-info">
+        <div class="chat-title">Asistente SCADA</div>
+        <div class="chat-subtitle">Google Gemini Agéntico · Rol: <span id="chat-role-lbl">--</span></div>
+      </div>
+      <div id="chat-status-led" class="status-led led-orange" title="Estado de conexión"></div>
+      <button id="btn-toggle-chat" class="btn-icon">✕</button>
     </div>
-    <div class="chat-body" id="chat-messages">
-      <div class="msg bot">Sistema Inicializado. ¿En qué te ayudo?</div>
-    </div>
-    
+
     <div class="chat-quick-replies" id="chat-quick-replies">
-      <button class="btn-quick-reply">¿Cuál es el OEE actual?</button>
-      <button class="btn-quick-reply">¿Hay alarmas activas?</button>
-      <button class="btn-quick-reply">Resumen de energía</button>
+      <button class="btn-quick-reply">📊 ¿Cuál es el OEE actual?</button>
+      <button class="btn-quick-reply">⚠️ ¿Hay alarmas activas?</button>
+      <button class="btn-quick-reply">⚡ Resumen de energía</button>
+      <button class="btn-quick-reply">🛡️ Estado de seguridad</button>
     </div>
-    <div class="chat-footer">
 
-              <div class="tel-item">
-                <span class="tel-label">DISPONIBILIDAD</span>
-                <span class="tel-value" id="kpi-avail">0.0%</span>
-              </div>
-              <div class="tel-item">
-                <span class="tel-label">RENDIMIENTO</span>
-                <span class="tel-value" id="kpi-perf">0.0%</span>
-              </div>
-              <div class="tel-item">
-                <span class="tel-label">MTBF</span>
-                <span class="tel-value" id="kpi-mtbf">0s</span>
-              </div>
-            </div>
-          </div>
-
-        </footer>
-      </div>
-
-      <!-- ==================== PESTAÑA: ANALÍTICA & IA ==================== -->
-      <div id="tab-analytics" class="tab-pane hidden">
-        <div class="panel-layout">
-          <div class="cyber-panel">
-            <div class="panel-header">EFICIENCIA ENERGÉTICA</div>
-            <div class="chart-wrapper"><div id="chart-energy" style="width:100%; height:100%;"></div></div>
-          </div>
-          <div class="cyber-panel">
-            <div class="panel-header">PRODUCCIÓN POR DESTINO</div>
-            <div class="chart-wrapper"><div id="chart-destinations" style="width:100%; height:100%;"></div></div>
-          </div>
-          <div class="cyber-panel full-width">
-            <div class="panel-header">REGISTRO DE MANTENIMIENTO</div>
-            <div class="chart-wrapper"><div id="chart-maintenance" style="width:100%; height:100%;"></div></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ==================== PESTAÑA: CIBERSEGURIDAD ==================== -->
-      <div id="tab-security" class="tab-pane hidden">
-        <div class="panel-layout">
-          <div class="cyber-panel full-width">
-            <div class="panel-header">
-              <span>FIREWALL OT & PREVENCIÓN DE INTRUSIONES</span>
-              <button id="btn-sec-reset" class="btn-phys btn-reset" style="padding: 2px 10px; font-size: 12px;">Desbloquear Sistema</button>
-            </div>
-            <div class="table-scroll">
-              <table class="cyber-table">
-                <thead><tr><th>TIEMPO</th><th>DIRECCIÓN</th><th>TRAMA / CARGA ÚTIL</th></tr></thead>
-                <tbody id="network-traffic-logs"></tbody>
-              </table>
-            </div>
-          </div>
-          
-          <div class="cyber-panel">
-            <div class="panel-header">INCIDENTES REGISTRADOS</div>
-            <div class="chart-wrapper"><div id="chart-alarms" style="width:100%; height:100%;"></div></div>
-          </div>
-          
-          <div class="cyber-panel">
-            <div class="panel-header">SIMULADOR DE ATAQUES</div>
-            <div class="attack-controls">
-              <button id="btn-attack-replay" class="btn-cyber btn-danger block">Lanzar Replay Attack</button>
-              <button id="btn-attack-tamper" class="btn-cyber btn-danger block mt-2">Lanzar Tampering (Firma Falsa)</button>
-              <div class="mt-3">
-                <small class="muted">Estos botones simulan inyecciones de red hacia el controlador PLC para probar la verificación de HMAC y Nonce temporal.</small>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ==================== PESTAÑA: USUARIOS ==================== -->
-      <div id="tab-users" class="tab-pane hidden">
-        <div class="panel-layout">
-          <div class="cyber-panel" style="flex: 1 1 300px;">
-            <div class="panel-header">CREAR NUEVO OPERARIO</div>
-            <form id="create-user-form" class="mt-3">
-              <div class="form-group">
-                <label>ID USUARIO</label>
-                <input type="text" id="ireg-user" class="cyber-input" required>
-              </div>
-              <div class="form-group">
-                <label>NOMBRE COMPLETO</label>
-                <input type="text" id="ireg-name" class="cyber-input" required>
-              </div>
-              <div class="form-group">
-                <label>NIVEL DE ACCESO</label>
-                <select id="ireg-role" class="cyber-input">
-                  <option value="Admin">Admin</option>
-                  <option value="Gerente">Gerente</option>
-                  <option value="Supervisor">Supervisor</option>
-                  <option value="Operador" selected>Operador</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>CONTRASEÑA (Mín. 6)</label>
-                <input type="password" id="ireg-pass" class="cyber-input" required>
-              </div>
-              <button type="submit" class="btn-cyber block">REGISTRAR USUARIO</button>
-            </form>
-          </div>
-          
-          <div class="cyber-panel" style="flex: 2 1 600px;">
-            <div class="panel-header">BASE DE DATOS DE USUARIOS</div>
-            <div id="users-table-container"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ==================== PESTAÑA: AJUSTES ==================== -->
-      <div id="tab-engineer" class="tab-pane hidden">
-        <div class="panel-layout">
-          
-          <!-- Ajustes de PLC -->
-          <div class="cyber-panel">
-            <div class="panel-header">PARÁMETROS PLC (FIRMADOS)</div>
-            <form id="config-timers-form" class="mt-3">
-              <div class="form-group">
-                <label>TOLVA: APERTURA (ms)</label>
-                <input type="number" id="cfg-hopper-delay" class="cyber-input" required>
-              </div>
-              <div class="form-group">
-                <label>CINTA 0: VACIADO (ms)</label>
-                <input type="number" id="cfg-cinta0-time" class="cyber-input" required>
-              </div>
-              <div class="form-group">
-                <label>DESTINO: VACIADO (ms)</label>
-                <input type="number" id="cfg-dest-time" class="cyber-input" required>
-              </div>
-              <button type="submit" class="btn-cyber block">APLICAR CAMBIOS</button>
-            </form>
-          </div>
-
-          <!-- Ajustes de IA (n8n) -->
-          <div class="cyber-panel">
-            <div class="panel-header">CONFIGURACIÓN n8n IA</div>
-            <form id="config-n8n-form" class="mt-3">
-              <div class="form-group">
-                <label>WEBHOOK URL</label>
-                <input type="text" id="cfg-n8n-url" class="cyber-input" value="https://agentes.henkki.co/webhook/hmi-ask" required>
-              </div>
-              <div class="form-group">
-                <label>TIPO DE AUTENTICACIÓN</label>
-                <select id="cfg-n8n-auth-type" class="cyber-input">
-                  <option value="none">Sin Autenticación</option>
-                  <option value="basic">Basic Auth</option>
-                  <option value="header">Header (API Key)</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>CREDENTIALS (User:Pass / Key)</label>
-                <input type="password" id="cfg-n8n-cred" class="cyber-input" placeholder="ej: admin:1234 o my-secret-token">
-              </div>
-              <button type="submit" class="btn-cyber block">GUARDAR CONFIGURACIÓN</button>
-            </form>
-          </div>
-
-          <!-- Auditoría -->
-          <div class="cyber-panel full-width">
-            <div class="panel-header">LOG DE AUDITORÍA (INMUTABLE)</div>
-            <div class="table-scroll">
-              <table class="cyber-table">
-                <thead><tr><th>TIEMPO</th><th>USUARIO</th><th>ACCIÓN</th><th>DETALLE</th></tr></thead>
-                <tbody id="audit-logs-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-          
-        </div>
-      </div>
-
-    </main>
-  </div>
-
-  <!-- ==================== WIDGET CHAT IA ==================== -->
-  <button id="btn-open-chat" class="chat-fab hidden">
-    <div id="chat-status-led" class="status-led led-orange" style="position:absolute; top:-2px; right:-2px;"></div>
-    <span>IA</span>
-  </button>
-  
-  <div id="ai-chat-widget" class="chat-widget hidden cyberpunk-panel">
-    <div class="chat-header">
-      AGENTE OT-AI
-      <button id="btn-toggle-chat" class="btn-icon">✖</button>
-    </div>
     <div class="chat-body" id="chat-messages">
-      <div class="msg bot">Sistema Inicializado. ¿En qué te ayudo?</div>
+      <div class="msg bot">👋 ¡Hola! Soy el <b>Asistente Agéntico de Operaciones</b> con Google Gemini.<br><br>Puedo responder tus consultas sobre el estado de la planta o ejecutar análisis en tiempo real según tu rol. ¿En qué puedo ayudarte?</div>
+      <div class="chat-online-lbl">En línea</div>
     </div>
-    
-    <div class="chat-quick-replies" id="chat-quick-replies">
-      <button class="btn-quick-reply">¿Cuál es el OEE actual?</button>
-      <button class="btn-quick-reply">¿Hay alarmas activas?</button>
-      <button class="btn-quick-reply">Resumen de energía</button>
-    </div>
-    <div class="chat-footer">
 
-      <input type="text" id="chat-input" class="cyber-input" placeholder="Comando de texto...">
-      <button id="btn-send-chat" class="btn-cyber">»</button>
+    <div class="chat-footer">
+      <input type="text" id="chat-input" class="chat-input" placeholder="Consulta o comando en lenguaje natural...">
+      <button id="btn-send-chat" class="btn-send">➤</button>
     </div>
   </div>
 
