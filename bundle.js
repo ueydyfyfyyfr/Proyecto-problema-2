@@ -1692,7 +1692,7 @@ function renderGauge(containerId, value, min = 0, max = 100, title = '', suffix 
   
   const pct = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
   const angle = (pct / 100) * 180 - 90;
-  let color = '#a855f7';
+  let color = '#00f0ff';
   if (pct < 50) color = '#d8b4fe';
   if (pct < 20) color = '#ef4444';
   
@@ -1721,7 +1721,7 @@ function renderBarChart(containerId, data, labels, title = '') {
     const h = (val / maxVal) * 80;
     const x = spacing + i * (barWidth + spacing);
     bars += `
-      <rect x="${x}" y="${100 - h}" width="${barWidth}" height="${h}" fill="#a855f7" rx="2" />
+      <rect x="${x}" y="${100 - h}" width="${barWidth}" height="${h}" fill="#00f0ff" rx="2" />
       <text x="${x + barWidth/2}" y="115" text-anchor="middle" fill="#aaa" font-size="10">${labels[i]}</text>
       <text x="${x + barWidth/2}" y="${95 - h}" text-anchor="middle" fill="white" font-size="10">${val.toFixed(1)}</text>
     `;
@@ -1737,7 +1737,7 @@ function renderBarChart(containerId, data, labels, title = '') {
   container.innerHTML = svg;
 }
 
-function renderSparkline(containerId, data, color = '#a855f7') {
+function renderSparkline(containerId, data, color = '#00f0ff') {
   const container = document.getElementById(containerId);
   if (!container || data.length < 2) return;
   
@@ -1825,7 +1825,7 @@ function renderHorizontalBar(containerId, data, labels, title = '') {
     const y = spacing + i * (barHeight + spacing) + 20;
     bars += `
       <text x="5" y="${y + 14}" fill="#aaa" font-size="10">${labels[i]}</text>
-      <rect x="80" y="${y}" width="${width}" height="${barHeight}" fill="#a855f7" rx="2" />
+      <rect x="80" y="${y}" width="${width}" height="${barHeight}" fill="#00f0ff" rx="2" />
       <text x="${80 + width + 5}" y="${y + 14}" fill="white" font-size="10">${val.toFixed(1)}</text>
     `;
   });
@@ -1839,7 +1839,7 @@ function renderHorizontalBar(containerId, data, labels, title = '') {
   container.innerHTML = svg;
 }
 
-function renderLineChart(containerId, dataArray, labelsArray, color = '#a855f7') {
+function renderLineChart(containerId, dataArray, labelsArray, color = '#00f0ff') {
   const container = document.getElementById(containerId);
   if (!container) return;
   
