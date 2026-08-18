@@ -541,170 +541,204 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 8. GESTIÓN DE USUARIOS INTEGRADA (Pestaña Usuarios)
-  // ─── Medidor de fortaleza de contraseña ───
-  const iregPass  = document.getElementById('ireg-password');
-  const iregPass2 = document.getElementById('ireg-password2');
-  const sFill     = document.getElementById('ireg-strength-fill');
-  const sLabel    = document.getElementById('ireg-strength-label');
-  const matchHint = document.getElementById('ireg-match-hint');
+  // Wrapped in try-catch: these elements may not exist in simplified HTML
+  try {
+    const iregPass  = document.getElementById('ireg-password');
+    const iregPass2 = document.getElementById('ireg-password2');
+    const sFill     = document.getElementById('ireg-strength-fill');
+    const sLabel    = document.getElementById('ireg-strength-label');
+    const matchHint = document.getElementById('ireg-match-hint');
 
-  iregPass.addEventListener('input', () => {
-    const p = iregPass.value;
-    let score = 0;
-    if (p.length >= 6)  score++;
-    if (p.length >= 10) score++;
-    if (/[A-Z]/.test(p)) score++;
-    if (/[0-9]/.test(p)) score++;
-    if (/[^A-Za-z0-9]/.test(p)) score++;
-    const pct   = (score / 5) * 100;
-    const colors = ['#ef4444','#f97316','#f59e0b','#10b981','#3b82f6'];
-    const labels = ['Muy débil','Débil','Moderada','Fuerte','Muy fuerte'];
-    const idx = Math.min(score, 4);
-    sFill.style.width = pct + '%';
-    sFill.style.backgroundColor = p.length ? colors[idx] : 'transparent';
-    sLabel.textContent = p.length ? `Fortaleza: ${labels[idx]}` : 'Ingresa una contraseña';
-    sLabel.style.color = p.length ? colors[idx] : 'var(--text-secondary)';
-    checkPasswordMatch();
-  });
-
-  iregPass2.addEventListener('input', checkPasswordMatch);
-
-  function checkPasswordMatch() {
-    const p1 = iregPass.value, p2 = iregPass2.value;
-    if (!p2) { matchHint.textContent = ''; return; }
-    if (p1 === p2) {
-      matchHint.textContent = '✔ Las contraseñas coinciden';
-      matchHint.style.color = 'var(--accent-green)';
-    } else {
-      matchHint.textContent = '✕ Las contraseñas no coinciden';
-      matchHint.style.color = '#f87171';
+    if (iregPass) {
+      iregPass.addEventListener('input', () => {
+        const p = iregPass.value;
+        let score = 0;
+        if (p.length >= 6)  score++;
+        if (p.length >= 10) score++;
+        if (/[A-Z]/.test(p)) score++;
+        if (/[0-9]/.test(p)) score++;
+        if (/[^A-Za-z0-9]/.test(p)) score++;
+        const pct   = (score / 5) * 100;
+        const colors = ['#ef4444','#f97316','#f59e0b','#10b981','#3b82f6'];
+        const labels = ['Muy débil','Débil','Moderada','Fuerte','Muy fuerte'];
+        const idx = Math.min(score, 4);
+        if (sFill) { sFill.style.width = pct + '%'; sFill.style.backgroundColor = p.length ? colors[idx] : 'transparent'; }
+        if (sLabel) { sLabel.textContent = p.length ? `Fortaleza: ${labels[idx]}` : 'Ingresa una contraseña'; sLabel.style.color = p.length ? colors[idx] : 'var(--text-secondary)'; }
+        checkPasswordMatch();
+      });
     }
-  }
 
-  // ─── Toggle visibilidad de contraseña ───
-  document.getElementById('ireg-toggle-pass').addEventListener('click', () => {
-    const t = iregPass.type === 'password' ? 'text' : 'password';
-    iregPass.type = t;
-    document.getElementById('ireg-toggle-pass').textContent = t === 'password' ? '👁' : '🙈';
-  });
+    if (iregPass2) iregPass2.addEventListener('input', checkPasswordMatch);
 
-  // ─── Normalizar username a minúsculas ───
-  document.getElementById('ireg-username').addEventListener('input', (e) => {
-    e.target.value = e.target.value.toLowerCase().replace(/\s+/g, '');
-  });
-
-  // ─── Lógica UI: Mostrar checklist solo para Operador ───
-  const iregRoleSelect = document.getElementById('ireg-role');
-  const opCapBox = document.getElementById('operador-capabilities-box');
-  if (iregRoleSelect && opCapBox) {
-    iregRoleSelect.addEventListener('change', (e) => {
-      if (e.target.value === 'Operador') {
-        opCapBox.style.display = 'block';
+    function checkPasswordMatch() {
+      if (!iregPass || !iregPass2 || !matchHint) return;
+      const p1 = iregPass.value, p2 = iregPass2.value;
+      if (!p2) { matchHint.textContent = ''; return; }
+      if (p1 === p2) {
+        matchHint.textContent = '✔ Las contraseñas coinciden';
+        matchHint.style.color = 'var(--accent-green)';
       } else {
-        opCapBox.style.display = 'none';
+        matchHint.textContent = '✕ Las contraseñas no coinciden';
+        matchHint.style.color = '#f87171';
       }
-    });
+    }
+
+    // Toggle visibilidad de contraseña
+    const togglePass = document.getElementById('ireg-toggle-pass');
+    if (togglePass && iregPass) {
+      togglePass.addEventListener('click', () => {
+        const t = iregPass.type === 'password' ? 'text' : 'password';
+        iregPass.type = t;
+        togglePass.textContent = t === 'password' ? '👁' : '🙈';
+      });
+    }
+
+    // Normalizar username a minúsculas
+    const iregUsername = document.getElementById('ireg-username');
+    if (iregUsername) {
+      iregUsername.addEventListener('input', (e) => {
+        e.target.value = e.target.value.toLowerCase().replace(/\s+/g, '');
+      });
+    }
+
+    // Mostrar checklist solo para Operador
+    const iregRoleSelect = document.getElementById('ireg-role');
+    const opCapBox = document.getElementById('operador-capabilities-box');
+    if (iregRoleSelect && opCapBox) {
+      iregRoleSelect.addEventListener('change', (e) => {
+        opCapBox.style.display = e.target.value === 'Operador' ? 'block' : 'none';
+      });
+    }
+
+    // Formulario de creación de usuario con PBKDF2
+    const inlineRegForm = document.getElementById('inline-register-form');
+    if (inlineRegForm) {
+      inlineRegForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errEl = document.getElementById('inline-register-error');
+        const okEl  = document.getElementById('inline-register-success');
+        if (errEl) errEl.innerText = ''; if (okEl) okEl.innerText = '';
+
+        const name  = document.getElementById('ireg-fullname')?.value || '';
+        const user  = document.getElementById('ireg-username')?.value || '';
+        const pass  = iregPass ? iregPass.value : '';
+        const pass2 = iregPass2 ? iregPass2.value : '';
+        const role  = document.getElementById('ireg-role')?.value || 'Operador';
+
+        if (pass !== pass2) { if (errEl) errEl.innerText = '⚠️ Las contraseñas no coinciden.'; return; }
+        
+        let capabilities = [];
+        if (role === 'Operador') {
+          capabilities.push('VIEW_ONLY');
+          const capBasic = document.getElementById('cap-basic-control');
+          const capSetpoints = document.getElementById('cap-change-setpoints');
+          if (capBasic && capBasic.checked) capabilities.push('CONTROL_MANUAL');
+          if (capSetpoints && capSetpoints.checked) capabilities.push('CHANGE_SETPOINTS');
+        }
+
+        const btn = document.getElementById('btn-ireg-submit');
+        if (btn) { btn.disabled = true; btn.innerText = '⏳ Generando hash PBKDF2 (100k iteraciones)...'; }
+        try {
+          await createUser(user, pass, role, name, capabilities);
+          if (okEl) okEl.innerText = `✔ Usuario "${user}" (${role}) creado con éxito.`;
+          e.target.reset();
+          if (opCapBox) opCapBox.style.display = 'none';
+          if (sFill) sFill.style.width = '0';
+          if (sLabel) sLabel.textContent = 'Ingresa una contraseña';
+          if (matchHint) matchHint.textContent = '';
+          renderUsersTable();
+        } catch(err) {
+          if (errEl) errEl.innerText = '⚠️ ' + err.message;
+        } finally {
+          if (btn) { btn.disabled = false; btn.innerText = '🔐 Crear Usuario (PBKDF2-SHA256)'; }
+        }
+      });
+    }
+
+    // Formulario simple (create-user-form) — el que realmente existe en el HTML
+    const simpleForm = document.getElementById('create-user-form');
+    if (simpleForm && !inlineRegForm) {
+      simpleForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          const user = document.getElementById('ireg-user')?.value || '';
+          const name = document.getElementById('ireg-name')?.value || '';
+          const role = document.getElementById('ireg-role')?.value || 'Operador';
+          const pass = document.getElementById('ireg-pass')?.value || '';
+          await createUser(user, pass, role, name);
+          alert(`✔ Usuario "${user}" (${role}) creado con éxito.`);
+          e.target.reset();
+          renderUsersTable();
+        } catch(err) {
+          alert('⚠️ ' + err.message);
+        }
+      });
+    }
+
+    // Exportar usuarios.json
+    const btnExport = document.getElementById('btn-export-json');
+    if (btnExport) {
+      btnExport.addEventListener('click', async () => {
+        const users = await getAllUsers();
+        const jsonData = { version: '1.0', generatedAt: new Date().toISOString(), generatedBy: 'Sistema OT — HMI Integrado (PBKDF2-SHA256)', users };
+        const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'usuarios.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showJsonIOMsg('ok', '✔ Archivo usuarios.json descargado.');
+      });
+    }
+
+    // Copiar JSON al portapapeles
+    const btnCopy = document.getElementById('btn-copy-json-users');
+    if (btnCopy) {
+      btnCopy.addEventListener('click', async () => {
+        const users = await getAllUsers();
+        const jsonData = { version: '1.0', generatedAt: new Date().toISOString(), users };
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(jsonData, null, 2));
+          showJsonIOMsg('ok', '✔ JSON copiado al portapapeles.');
+          showJsonPreview(jsonData);
+        } catch(e) { showJsonIOMsg('err', 'No se pudo copiar. Usa HTTPS o localhost.'); }
+      });
+    }
+
+    // Importar usuarios.json
+    const btnImport = document.getElementById('ireg-import-file');
+    if (btnImport) {
+      btnImport.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const count = importUsersJSON(text);
+          showJsonIOMsg('ok', `✔ ${count} usuario(s) importados desde "${file.name}".`);
+          renderUsersTable();
+          showJsonPreview(JSON.parse(text));
+        } catch(err) { showJsonIOMsg('err', '⚠️ ' + err.message); }
+        e.target.value = '';
+      });
+    }
+
+    // Cerrar preview JSON
+    const btnClosePreview = document.getElementById('btn-json-preview-close');
+    if (btnClosePreview) {
+      btnClosePreview.addEventListener('click', () => {
+        const box = document.getElementById('json-preview-box');
+        if (box) box.style.display = 'none';
+      });
+    }
+
+    // Botón actualizar tabla
+    const btnRefresh = document.getElementById('btn-refresh-users');
+    if (btnRefresh) {
+      btnRefresh.addEventListener('click', () => { renderUsersTable(); });
+    }
+  } catch(userSectionError) {
+    console.warn('[HMI] Sección de gestión de usuarios no disponible:', userSectionError.message);
   }
-
-  // ─── Formulario de creación de usuario con PBKDF2 ───
-  document.getElementById('inline-register-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const errEl = document.getElementById('inline-register-error');
-    const okEl  = document.getElementById('inline-register-success');
-    errEl.innerText = ''; okEl.innerText = '';
-
-    const name  = document.getElementById('ireg-fullname').value;
-    const user  = document.getElementById('ireg-username').value;
-    const pass  = iregPass.value;
-    const pass2 = iregPass2.value;
-    const role  = document.getElementById('ireg-role').value;
-
-    if (pass !== pass2) { errEl.innerText = '⚠️ Las contraseñas no coinciden.'; return; }
-    
-    let capabilities = [];
-    if (role === 'Operador') {
-      capabilities.push('VIEW_ONLY');
-      if (document.getElementById('cap-basic-control').checked) capabilities.push('CONTROL_MANUAL');
-      if (document.getElementById('cap-change-setpoints').checked) capabilities.push('CHANGE_SETPOINTS');
-    }
-
-    const btn = document.getElementById('btn-ireg-submit');
-    btn.disabled = true;
-    btn.innerText = '⏳ Generando hash PBKDF2 (100k iteraciones)...';
-    try {
-      await createUser(user, pass, role, name, capabilities);
-      okEl.innerText = `✔ Usuario "${user}" (${role}) creado con éxito.`;
-      e.target.reset();
-      opCapBox.style.display = 'none';
-      sFill.style.width = '0'; sLabel.textContent = 'Ingresa una contraseña';
-      matchHint.textContent = '';
-      renderUsersTable();
-    } catch(err) {
-      errEl.innerText = '⚠️ ' + err.message;
-    } finally {
-      btn.disabled = false;
-      btn.innerText = '🔐 Crear Usuario (PBKDF2-SHA256)';
-    }
-  });
-
-  // ─── Exportar usuarios.json ───
-  document.getElementById('btn-export-json').addEventListener('click', async () => {
-    const users = await getAllUsers();
-    const jsonData = {
-      version: '1.0',
-      generatedAt: new Date().toISOString(),
-      generatedBy: 'Sistema OT — HMI Integrado (PBKDF2-SHA256)',
-      users: users
-    };
-    const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'usuarios.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showJsonIOMsg('ok', '✔ Archivo usuarios.json descargado.');
-  });
-
-  // ─── Copiar JSON al portapapeles ───
-  document.getElementById('btn-copy-json-users').addEventListener('click', async () => {
-    const users = await getAllUsers();
-    const jsonData = { version: '1.0', generatedAt: new Date().toISOString(), users };
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(jsonData, null, 2));
-      showJsonIOMsg('ok', '✔ JSON copiado al portapapeles.');
-      // Mostrar preview
-      showJsonPreview(jsonData);
-    } catch(e) {
-      showJsonIOMsg('err', 'No se pudo copiar. Usa HTTPS o localhost.');
-    }
-  });
-
-  // ─── Importar usuarios.json ───
-  document.getElementById('ireg-import-file').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const count = importUsersJSON(text);
-      showJsonIOMsg('ok', `✔ ${count} usuario(s) importados desde "${file.name}".`);
-      renderUsersTable();
-      // Mostrar preview del archivo importado
-      showJsonPreview(JSON.parse(text));
-    } catch(err) {
-      showJsonIOMsg('err', '⚠️ ' + err.message);
-    }
-    e.target.value = '';
-  });
-
-  // ─── Cerrar preview JSON ───
-  document.getElementById('btn-json-preview-close').addEventListener('click', () => {
-    document.getElementById('json-preview-box').style.display = 'none';
-  });
-
-  // ─── Botón actualizar tabla ───
-  document.getElementById('btn-refresh-users').addEventListener('click', () => {
-    renderUsersTable();
-  });
 
   // ─── Helpers de la pestaña Usuarios ───
   function showJsonIOMsg(type, text) {
@@ -737,50 +771,51 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   
   // Ataque de trama no firmada
-  document.getElementById('btn-attack-unsigned').addEventListener('click', async () => {
-    const payload = {
-      command: 'PMARCHA',
-      user: 'Hacker (Unsigned Injection)',
-      timestamp: Date.now(),
-      nonce: generateNonce()
-    };
-    const packet = { payload }; // Sin hmac
-    
-    logNetworkTraffic('SENT (ATTACK)', packet);
-    await handleNetworkMessage(JSON.stringify(packet));
-  });
+  const btnUnsigned = document.getElementById('btn-attack-unsigned');
+  if (btnUnsigned) {
+    btnUnsigned.addEventListener('click', async () => {
+      const payload = {
+        command: 'PMARCHA',
+        user: 'Hacker (Unsigned Injection)',
+        timestamp: Date.now(),
+        nonce: generateNonce()
+      };
+      const packet = { payload }; // Sin hmac
+      logNetworkTraffic('SENT (ATTACK)', packet);
+      await handleNetworkMessage(JSON.stringify(packet));
+    });
+  }
   
   // Ataque de manipulación de datos (Tampering)
-  document.getElementById('btn-attack-tampered').addEventListener('click', async () => {
-    // El atacante genera un comando legítimo de Parada, pero lo manipula para que sea Marcha sin conocer la clave secreta
-    const payload = {
-      command: 'PPARO',
-      user: 'Hacker (Tampering)',
-      timestamp: Date.now(),
-      nonce: generateNonce()
-    };
-    const payloadStr = JSON.stringify(payload);
-    // Generar HMAC válido para PPARO
-    const correctHmac = await generateHMAC(payloadStr, "PlcSuperSecretKeyOT2026!");
-    
-    // Manipular el comando en el payload enviado
-    payload.command = 'PMARCHA';
-    payload.user = 'Hacker (Tampered Payload)';
-    
-    const packet = { payload, hmac: correctHmac };
-    
-    logNetworkTraffic('SENT (ATTACK)', packet);
-    await handleNetworkMessage(JSON.stringify(packet));
-  });
+  const btnTampered = document.getElementById('btn-attack-tampered');
+  if (btnTampered) {
+    btnTampered.addEventListener('click', async () => {
+      const payload = {
+        command: 'PPARO',
+        user: 'Hacker (Tampering)',
+        timestamp: Date.now(),
+        nonce: generateNonce()
+      };
+      const payloadStr = JSON.stringify(payload);
+      const correctHmac = await generateHMAC(payloadStr, "PlcSuperSecretKeyOT2026!");
+      payload.command = 'PMARCHA';
+      payload.user = 'Hacker (Tampered Payload)';
+      const packet = { payload, hmac: correctHmac };
+      logNetworkTraffic('SENT (ATTACK)', packet);
+      await handleNetworkMessage(JSON.stringify(packet));
+    });
+  }
   
   // Ataque de Replay
-  document.getElementById('btn-attack-replay').addEventListener('click', async () => {
-    if (!lastValidPacket) {
-      alert('Primero debes enviar un comando legítimo en el Dashboard (ej. presionar Marcha) para interceptar y registrar una trama válida en tránsito.');
-      return;
-    }
-    
-    logNetworkTraffic('SENT (ATTACK - REPLAY)', lastValidPacket);
-    await handleNetworkMessage(JSON.stringify(lastValidPacket));
-  });
+  const btnReplay = document.getElementById('btn-attack-replay');
+  if (btnReplay) {
+    btnReplay.addEventListener('click', async () => {
+      if (!lastValidPacket) {
+        alert('Primero debes enviar un comando legítimo en el Dashboard (ej. presionar Marcha) para interceptar y registrar una trama válida en tránsito.');
+        return;
+      }
+      logNetworkTraffic('SENT (ATTACK - REPLAY)', lastValidPacket);
+      await handleNetworkMessage(JSON.stringify(lastValidPacket));
+    });
+  }
 });
