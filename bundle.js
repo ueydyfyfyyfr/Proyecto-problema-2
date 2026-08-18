@@ -2656,21 +2656,7 @@ function renderAuditLogs() {
 function updateForcedSwitches(state) {
   // Ya no se dibujan estos interruptores en la nueva UI
 }
-  
-  const sensors = [
-    { id: 'fail-vigc0', sensor: 'VigC0' },
-    { id: 'fail-vigc1', sensor: 'VigC1' },
-    { id: 'fail-vigc2', sensor: 'VigC2' },
-    { id: 'fail-vigc3', sensor: 'VigC3' },
-  ];
-  
-  sensors.forEach(sn => {
-    const el = document.getElementById(sn.id);
-    if (el) {
-      el.checked = !state.inputs[sn.sensor]; // checked = sensor está fallando
-    }
-  });
-}
+
 
 // Configurar permisos de la interfaz basados en el rol activo
 function applyRBACPermissions() {
